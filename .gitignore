@@ -1,0 +1,8 @@
+output/
+*.pdf
+*.xlsx
+__pycache__/
+*.pyc
+.env
+config.yaml
+*.log
