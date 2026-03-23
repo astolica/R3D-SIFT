@@ -2,8 +2,7 @@
 
 > Built by [Humza Sheikh](https://github.com/HumdoesCyber) | University of Arizona, Information Science  
 > Status: **Active Development** | Week 1 of 3  
-> Environment: University-approved lab environment  
-> Donating to U of A Cyber Operations Program upon completion
+> Environment: University-approved lab environment 
 
 ---
 
