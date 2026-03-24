@@ -417,6 +417,9 @@ class OSINTProfile:
     waf_detected: bool          = False
     waf_type:     Optional[str] = None
 
+    # Org type -- set by GRC mapper, read on resume
+    org_type:     Optional[str] = None
+
     # People
     emails:          list = field(default_factory=list)
     usernames:       list = field(default_factory=list)
@@ -450,6 +453,7 @@ class OSINTProfile:
             "cms":                  self.cms,
             "waf_detected":         self.waf_detected,
             "waf_type":             self.waf_type,
+            "org_type":             self.org_type,
             "emails":               self.emails,
             "usernames":            self.usernames,
             "breached_emails":      self.breached_emails,
