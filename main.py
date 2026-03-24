@@ -49,6 +49,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib import response
 
 from rich.console import Console
 
@@ -346,9 +347,8 @@ def cmd_setup_cve_db():
         return
 
     try:
-        from core.cve_engine import CVEEngine
-        engine = CVEEngine()
-        engine.setup_local_db()
+        from core.cve_engine import setup_cve_db
+        setup_cve_db()
         console.print(
             "[green]CVE database downloaded successfully.[/green]"
         )
@@ -356,8 +356,7 @@ def cmd_setup_cve_db():
         console.print(
             f"[red]CVE database setup failed: {e}[/red]"
         )
-
-
+        
 def cmd_update():
     """
     Update R3D to latest version.
