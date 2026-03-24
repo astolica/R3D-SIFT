@@ -10,3 +10,4 @@ config.yaml
 venv/
 *.egg-info/
 .pytest_cache/
+data/llm_attack_kb/original_research.md
