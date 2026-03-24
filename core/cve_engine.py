@@ -712,6 +712,7 @@ if __name__ == "__main__":
     result = engine.lookup(
         service="Apache httpd",
         version="2.4.49",
+        
         target="test-target.com"
     )
     console.print(f"CVE ID: {result.cve_id}")
