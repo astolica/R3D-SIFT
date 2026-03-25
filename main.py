@@ -245,7 +245,7 @@ def cmd_test_connection():
         ))
 
     # 5. CVE database
-    cve_path = BASE_DIR / "data" / "cve_db" / "nvdcve.db"
+    cve_path = BASE_DIR / "data" / "cve_database.json"
     if cve_path.exists():
         size_mb = cve_path.stat().st_size // (1024 * 1024)
         results.append((

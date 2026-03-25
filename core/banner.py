@@ -37,7 +37,7 @@ console = Console()
 BASE_DIR        = Path(__file__).parent.parent
 OUTPUT_DIR      = BASE_DIR / "output"
 ENGAGEMENTS_DIR = OUTPUT_DIR / "engagements"
-CVE_DB_PATH     = BASE_DIR / "data" / "cve_db" / "nvdcve.db"
+CVE_DB_PATH = BASE_DIR / "data" / "cve_database.json"
 R3D_VERSION     = "1.0"
 
 ASCII_ART = r"""
