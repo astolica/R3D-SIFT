@@ -325,36 +325,15 @@ The full thinking behind this is in `docs/my-approach.md`.
 
 ## V2 Roadmap
 
-**Phase 1 (Month 1-2)**
-```
-Shodan API              IP intelligence + exposure mapping
-Nuclei                  9,000+ web vulnerability templates
-Metasploit              Exploitation -- GUIDED/SEMI-AUTO gated
-Bing API                Dual search engine (DDG + Bing)
-TEP-011/012/013         New original research vectors
-```
+## What's Next
 
-**Phase 2 (Month 3-4)**
-```
-Healthcare KB           HIPAA + HITRUST compliance mapping
-Finance KB              SOC 2 + PCI-DSS v4.0 mapping
-FedRAMP KB              FedRAMP + FISMA + CMMC 2.0
-Multi-target mode       --target-list file.txt batch scanning
-Docker packaging        Enterprise on-prem appliance
-SIEM push               Splunk / Elastic / Wazuh direct integration
-Jira / ServiceNow       Auto-ticket creation per finding
-Prompt Intelligence     Learns operator patterns over time
-```
+V1.0 is complete and actively used. Future development
+will expand offensive capability, add specialized
+compliance frameworks for healthcare and finance,
+and explore enterprise deployment packaging.
 
-**Phase 3 (Month 5-6)**
-```
-MSP mode                Multi-client profile management
-Web dashboard           Self-hosted Flask UI
-Enterprise license      On-prem appliance model
-Self-improvement agent  Autonomous KB and payload updates
-```
-
----
+Contributions and collaboration inquiries welcome
+via GitHub.
 
 ## Repository Structure
 
