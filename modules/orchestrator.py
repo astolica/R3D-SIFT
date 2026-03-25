@@ -645,9 +645,8 @@ class Orchestrator:
 
                 # FIX 2: OSINTRecon.run() returns list[Finding], not a tuple.
                 # Profile lives on recon.profile -- not returned by run().
-                osint_findings = recon.run()
-                profile        = recon.profile
 
+                osint_findings, profile = recon.run()
                 heartbeat.stop()
 
                 # Set org_type on profile if provided via CLI
