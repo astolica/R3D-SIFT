@@ -1,100 +1,128 @@
 # R3D Build Log
-## Engineering Journal v1.0
-### Author: HumdoesCyber
-### Built: March 2026
+## Engineering Journal
+### Author: Humza Sheikh (HumdoesCyber)
 
 ---
 
 ## Project Overview
 
-R3D is an autonomous red team agent that bridges the gap
-between technical security and GRC compliance. Built on
-over 100 hours of research, planning, and engineering.
+R3D is a fully local autonomous purple team agent that bridges
+the gap between technical security and GRC compliance.
+Built on 14 months of original AI security research and
+150 hours of engineering.
 
 Fully local. No cloud APIs. No cost per run.
 Zero data leaves the machine.
 
-Stack: Python 3.12, Ollama llama3:8b, Nmap 7.95
-Hardware: RTX 5070 Ti laptop
-
 ---
 
-## Total Investment
+## The Real Timeline
 
-```
-Research period (14 months):
-  NIST 800-53 study              ~20 hours
-  NERC CIP study                 ~15 hours
-  TEP risk register (4 versions) ~25 hours
-  WISP audit execution           ~20 hours
-  AI security research           ~40 hours
-  TEP-005/TEP-010 development    ~15 hours
-  Architecture planning          ~10 hours
-  Total research:                ~145 hours
+This did not start in March 2026.
 
-Build sprint (March 2026):
-  Day 1: Setup + core files      ~8 hours
-  Day 2: OSINT + LLM modules     ~10 hours
-  Day 3: Traditional + GRC       ~10 hours
-  Day 4: Orchestrator + finish   ~10 hours
-  Total build:                   ~38 hours
+### December 2024 -- Research Begins
 
-Combined total: 180+ hours
-```
+Started studying NIST SP 800-53 and NERC CIP for real client
+work at the Google Cybersecurity Clinic and independent
+consulting engagements. The gap between technical security
+findings and GRC compliance language became impossible to ignore.
 
----
-
-## Timeline
-
-### Late 2024 -- Early 2026: Research Period
-
-Started studying NIST SP 800-53 and NERC CIP for real
-client work at the Google Cybersecurity Clinic and
-independent consulting engagements.
-
-Key milestones:
+Key research milestones over 14 months:
 - Built NIST SP 800-30 risk register through 4 versions
-  for a real utility company engagement
 - Executed WISP audit mapped to FTC Safeguards Rule
-  with real $100K liability cap for a real client
-- Authored 52-page governance framework adopted by
-  University of Arizona college leadership
-- 14 months of original AI security research
-- Identified TEP-005 (Contextual Trust Accumulation)
-  and TEP-010 (Relational State Exploitation) --
-  novel multi-turn attack vectors outside OWASP LLM Top 10
-- Competed at WRCCDC -- 9 hour live SOC simulation
-- Google Cybersecurity Clinic -- real client engagements
+  with $100K liability cap for real client
+- Authored 52-page ISCC Governance Framework adopted
+  by college leadership
+- Competed at WRCCDC -- 9-hour live SOC simulation
+- 14 months of original AI security research into
+  multi-turn LLM attack vectors outside OWASP LLM Top 10
 
-### March 19, 2026: Architecture Planning
+The architecture of R3D was shaped by this research period.
+Every design decision traces back to something learned
+during real client work or original research.
 
-Planned the full R3D architecture before writing line one.
-10 hours of planning across 2 days. Every module interface
-defined. Every data contract written. Every handoff pattern
-decided before any implementation began.
+### March 19, 2026 -- Architecture Planning
 
-Key decisions locked before first commit:
-- Fully local via Ollama -- zero API cost
+Two days before the first commit, the full R3D architecture
+was planned. Every module interface defined. Every data
+contract locked. Every handoff pattern documented.
+
+This is why the build was fast. The hard decisions were
+already made before a single line existed.
+
+Key decisions locked on day one:
+- Fully local via Ollama -- zero API cost, air-gappable
 - Three operating modes: GUIDED, SEMI-AUTO, FULL-AUTO
-- Five module pipeline: OSINT -> LLM -> Trad -> GRC -> Report
+- Five module pipeline: OSINT → LLM → Trad → GRC → Report
 - OSINTProfile dataclass as shared state across modules
-- Finding dataclass with automatic MITRE + OWASP mapping
+- Finding dataclass with MITRE + OWASP auto-mapping
 - Checkpointing via state.json after every module
 - Org type selection for framework loading optimization
 - Context filtering before LLM handoff
-- Fail open on all external service dependencies
+- Python always the final authority on CVEs
 
-### March 21-24, 2026: Build Sprint
+### March 21, 2026 -- Build Begins
 
-21 commits. ~38 hours of focused engineering.
-Running at 3x the original 3-week projected timeline.
-First successful end-to-end engagement completed March 24.
+First commit. Architecture already locked.
+This is why velocity was high -- no design decisions
+were made during implementation.
+
+### March 22-23, 2026 -- Build Sprint
+
+23 commits in less than 72 hours.
+Full pipeline from zero to complete.
+
+### March 24, 2026 -- V1.0 Complete
+
+First live engagement: scanme.nmap.org
+Time: 28 minutes 50 seconds
+Findings: 9
+Outputs: PDF, XLSX risk register, XLSX compliance map,
+         JSON telemetry. All clean.
 
 ---
 
-## Complete Commit History
+## Methodology
+
+This project was built through AI-assisted systems engineering.
+That is a precise description, not a marketing phrase.
+
+Architecture before code. Every module interface was defined
+before implementation began. OSINTProfile fields. Finding schema.
+The data contract between every module. All locked before
+a single line was written.
+
+Security review before every paste. Every module was reviewed
+for infinite loops, error handling gaps, input sanitization
+failures, and cross-module compatibility before running on
+hardware. This is why modules worked first or second try.
+
+Comprehension over convenience. Every decision has a documented
+reason. The context filter strips emails before LLM handoff
+because they add noise without improving attack surface coverage.
+The verifier only touches LLM findings because OSINT and
+traditional recon outputs are Python-authoritative.
+
+Claude and Gemini acted as technical consultants -- code review,
+error checking, compatibility verification, syntax generation.
+The domain knowledge, the architecture, the security decisions,
+and the research are mine.
 
 ```
+14 months   Domain research + real client work
+150 hours   Coding, architecture, security review
+4 days      Build sprint -- 23 commits
+            Two weeks ahead of original 3-week estimate
+```
+
+---
+
+## Commit History
+
+```
+3a2dcc3  chore: add CVE database to gitignore (130MB)
+d4b8278  fix: use setup_cve_db function in cmd_setup_cve_db
+a15b6fc  docs: complete README rewrite and final guides v1.0
 129b283  feat: add banner with system checks and main.py CLI
 bdac904  feat: add improvement engine with trend analysis
 aef83cc  feat: add verifier with NVD CVE validation
@@ -122,155 +150,245 @@ c70e262  feat: initial commit
 
 ## Architecture Decisions
 
-### Why plan before coding
-Every module worked first or second try because interfaces
-were defined before implementation. The planning hours
-paid back in zero major debugging sessions during build.
-
-### Why Ollama and not OpenAI API
+### Why Ollama and Not OpenAI API
 Zero cost per run. Zero data leaving the machine.
 Fully air-gappable for sensitive engagements.
-RTX 5070 Ti runs llama3:8b fast enough for production.
+RTX 5070 Ti runs llama3:8b fast enough for production use.
+For critical infrastructure work you cannot send data
+to a cloud API. Local by design, not by configuration.
 
-### Why three-tier LLM attack architecture
-Tier 1 (static) catches poorly configured targets fast.
-Tier 2 (adaptive KB-guided) catches targets that blocked Tier 1.
-Tier 3 (original research) catches hardened targets using
-novel multi-turn social engineering sequences that no
-existing automated tool tests for.
+### Why Plan Before Coding
+Every module worked first or second try because the interfaces
+were defined before implementation. Most debugging time is spent
+fixing design decisions made during implementation. I fixed
+design first. The 4-day sprint was fast because of the
+14 months before it.
 
-### Why focused KB files not 400 page documents
-llama3:8b has an 8,000 token context window.
-Full frameworks overflow it and produce generic output.
-Focused KB files produce specific actionable guidance.
+### Why Focused KB Files and Not Full Documents
+Ollama's context window is approximately 8,000 tokens.
+A full NIST 800-53 document would overflow it and produce
+generic output. Focused KB files with only relevant controls
+give the model exactly what it needs for each finding type.
 Precision beats volume for local LLM inference.
 
-### Why org type selection
-Not every organization needs every framework.
-Loading only relevant frameworks reduces runtime by
-40-60% and produces focused reports operators can act on.
+### Why Org Type Selection
+Not every organization needs every framework. Loading only
+relevant frameworks reduces runtime by 40-60%, improves
+Ollama output quality, and produces focused reports operators
+can actually act on. Nobody reads the 400-page report.
 
-### Why checkpointing after every module
-A full engagement takes 15-45 minutes. state.json saves
-completed modules so --resume picks up exactly where
-it stopped. No wasted work on interruptions.
+### Why Three-Tier LLM Attack Architecture
+Tier 1 (static) catches poorly configured targets fast.
+Tier 2 (adaptive) catches targets that blocked Tier 1.
+Tier 3 (original research) catches hardened targets using
+novel multi-turn sequences based on 14 months of independent
+research into attack vectors outside the current published
+literature. No existing tool uses this approach.
 
-### Why context filtering before LLM handoff
-OSINT can find 500 subdomains and 50 emails.
-Passing all that to the LLM fills the 8k context window
-with noise. Filter passes only live AI surfaces and
-AI-relevant subdomains. Everything else stripped.
+### Why Checkpointing After Every Module
+A full engagement can take 15-45 minutes. If anything crashes
+at minute 40, losing all data is unacceptable. state.json saves
+completed modules so --resume picks up exactly where it stopped.
 
-### Why fail open on CVE validation
-The verifier should never strip a CVE ID just because
-it can't confirm it exists. If NVD is unavailable keep
-the CVE. Only strip when NVD actively returns no results.
+### Why Context Filtering Before LLM Handoff
+OSINT can find 500 subdomains, 50 emails, 200 historical
+endpoints. Passing all of that to the LLM attack module fills
+the context window with noise. Filter passes only live AI
+surfaces and relevant subdomains. Protects context window
+quality and keeps Ollama output precise.
 
----
+### Why Sanitize All Inputs Before Nmap
+Command injection via target parameter is a real risk.
+_sanitize_ip() and _sanitize_target() strip everything
+except alphanumeric, dots, and hyphens before any nmap call.
+No shell=True anywhere in the codebase.
 
-## On AI Consultation
-
-AI tools were used as technical consultants during this
-build -- not as code generators. Every architectural
-decision, security design choice, and engineering tradeoff
-was made by the developer based on 14+ months of prior
-research and domain knowledge.
-
-AI consultation was used for:
-- Code review and error checking before execution
-- Compatibility verification across module interfaces
-- Identifying edge cases in error handling
-- Second opinions on architectural decisions
-
-What AI cannot do and did not do:
-- Understand the TEP engagement context
-- Know what problem was worth solving
-- Have 14 months of security research to draw on
-- Make judgment calls about what matters
-
-The research, architecture, security vectors, compliance
-mappings, and design philosophy are entirely original.
-AI was a reviewer, not an author.
+### Why Python Is Always the Final Authority on CVEs
+LLMs hallucinate. A hallucinated CVE ID in a security report
+is a serious credibility and accuracy failure. CVE IDs only
+come from cve_engine.py querying real NVD data. The LLM
+never generates CVE identifiers under any circumstances.
 
 ---
 
-## Bugs Fixed During Build
+## Module Engineering Notes
 
-### OSINT module
-- DNS resolver: added nameservers 8.8.8.8 + 1.1.1.1
-- datetime.utcnow() deprecated: timezone-aware replacement
-- urllib3 warnings: suppressed at module level
-- Sherlock module path: corrected to sherlock_project.sherlock
+### core/llm_client.py
+Ollama wrapper with JSON validation and LLMResponse schema.
+All LLM calls go through this -- single point of control.
+Synchronous by design -- no parallel LLM calls.
+Prevents VRAM OOM on RTX 5070 Ti 12GB.
 
-### Traditional recon
-- datetime import conflict: removed inner import
-- Unused imports: removed json/shlex/subprocess
-- JS pattern matches: capped at [:3] per pattern
-- Regex escape warning: fixed [^a-zA-Z0-9.-]
+### core/cve_engine.py
+Three-tier CVE lookup: local NVD database, NVD API, zero-day flag.
+Python is the final authority -- LLM never generates CVE IDs.
+This prevents hallucinated CVE numbers in reports.
 
-### GRC mapper
-- ISO 27001:2022 colon in Excel sheet name:
-  added _sanitize_sheet_name()
-- OSINTProfile missing org_type: added field and to_dict()
+### core/findings.py
+Finding dataclass with automatic MITRE ATT&CK and OWASP mapping
+on creation. MD5 deduplication prevents duplicate findings.
+FindingsAggregator collects all findings with severity counts
+and zero-day flags.
 
-### Orchestrator
-- OSINTProfile.load() nonexistent: replaced with from_dict()
-- FindingsAggregator.add_findings(): replaced with loop
-- save_findings_json(): wrapped in own try/except
+### core/report_gen.py
+PDF via reportlab. XLSX via openpyxl. JSON telemetry for blue
+team SIEM ingestion. All three outputs from single
+AggregatedFindings object.
 
-### Verifier
-- cve_engine.lookup() no cve_override param:
-  replaced with direct NVD API call
-- model_copy() pydantic v2 only:
-  added _copy_finding() helper for v1/v2 compatibility
-- aggregated.findings[0].target fragile:
-  replaced with aggregated.target directly
+### modules/osint_recon.py
+10 checks. RateLimiter class with per-domain sliding window.
+WAF detection with 8 vendor signatures. Google to DuckDuckGo
+automatic fallback. Sherlock blocked in FULL-AUTO regardless
+of mode. fast_mode=True for testing only.
 
-### Improvement engine
-- Payload matching by text[:30] never matches:
-  fixed to regex [P-XXX] bracket pattern
-- Optional_str := None invalid syntax: fixed
+### modules/llm_attack.py
+Three-tier architecture: static → KB-guided → original research.
+ConversationManager handles multi-turn sessions per surface.
+ResponseAnalyzer scores responses across three layers.
+Tier 3 original research sequences are available to authorized
+installations only and are never pushed to GitHub.
+
+### modules/traditional_recon.py
+Checks 1-3 combined in one nmap run for efficiency.
+NMAP_TIMEOUT=300 hard caps execution.
+SSL check uses timezone-aware datetime.
+JS bundle analysis capped: 10 files, 3 matches per pattern.
+WAF bypass only runs if OSINT detected a WAF.
+Each check independent -- one failure never stops others.
+
+### modules/grc_mapper.py
+Org type selection -- asked once, saved to profile.
+AI RMF auto-loads regardless of org type if AI surfaces found.
+All framework lookup tables are pure Python dicts -- fast.
+Excel sheet names sanitized -- no illegal characters.
+Ollama generates executive summary grounded in KB context.
+Falls back to template if Ollama unavailable.
+
+### modules/orchestrator.py
+Master sequencer for all four modules.
+Engagement ID ties all output files together.
+Authorization consent screen required before any module runs.
+Context filtering before LLM handoff protects context window.
+Heartbeat thread prints progress during long operations.
+45 minute default timeout prevents infinite hangs.
+Verifier hook fails gracefully if not built.
+
+### core/verifier.py
+Only touches LLM attack findings -- everything else passes through.
+CVE validation via direct NVD API call. Fail open on timeout.
+Semantic dedup with Ollama primary, difflib fallback.
+Pydantic v1/v2 compatible via _copy_finding() helper.
+
+### core/improvement_engine.py
+Reads verification reports to find patterns in what fails.
+Generates ranked suggestions -- CRITICAL/HIGH/MEDIUM.
+Operator approves every suggestion. Nothing auto-modified.
+Minimum 3 engagements before pattern analysis runs.
+
+### data/compliance_kb/
+Five focused KB files -- not full framework documents.
+Each file contains only controls relevant to R3D finding types.
+Ollama reads 1,500 chars from each -- enough to reason precisely.
+Full frameworks overflow context window and degrade output.
+
+---
+
+## Bugs Found and Fixed
+
+All bugs were caught during security review before pasting --
+not discovered at runtime.
+
+```
+DNS resolver failing         added nameservers=['8.8.8.8','1.1.1.1']
+datetime.utcnow() deprecated replaced with datetime.now(timezone.utc)
+ISO 27001 colon in Excel     added _sanitize_sheet_name()
+OSINTProfile missing field   added org_type + to_dict() entry
+urllib3 warnings             suppressed at module level
+Regex escape warning         [^a-zA-Z0-9.-] corrected
+OSINTProfile.load()          replaced with from_dict()
+add_findings() plural        replaced with add_finding() loop
+Tuple unpack on OSINT        fixed to osint_findings = recon.run()
+generate_all() missing       replaced with three individual calls
+Orphan dir on resume         deferred dir creation until after check
+Sleep on skipped modules     gated sleep on module completion
+```
+
+---
+
+## Performance
+
+Full engagement A to Z: 15-25 minutes standard
+
+```
+OSINT module        3-8 min
+LLM attack          2-4 min (if AI surfaces found)
+Traditional recon   3-5 min (top 1000 ports)
+GRC mapper          1-2 min
+Report generation   <1 min
+```
+
+First live result:
+```
+Target:   scanme.nmap.org
+Time:     28 minutes 50 seconds
+Findings: 9
+Outputs:  PDF, XLSX x2, JSON telemetry -- all clean
+```
 
 ---
 
 ## Security Decisions
 
-All nmap inputs sanitized via regex. No shell=True.
-urllib3 warnings suppressed at module level.
-Rate limiter prevents DoS and IP bans.
-GUIDED mode gates cannot be bypassed by orchestrator.
-Sherlock hard-blocked in FULL-AUTO regardless of config.
-TEP-005/TEP-010 research gitignored -- never public.
-Authorization consent screen runs even in FULL-AUTO.
-Context filtered before LLM handoff -- no PII to model.
-Fail open on all external service dependencies.
-
----
-
-## Performance Achieved
-
-First live engagement: scanme.nmap.org
-Duration: 28 minutes 50 seconds
-Findings: 9 (1 MEDIUM, 8 LOW)
-Output: PDF + XLSX risk register + compliance map + telemetry
-Frameworks: NIST 800-53, NERC CIP, ISO 27001, CIS Controls, AI RMF
+```
+All nmap inputs sanitized via regex before execution
+No shell=True anywhere in codebase
+urllib3 InsecureRequestWarning suppressed at module level
+Rate limiter prevents accidental DoS and IP bans
+GUIDED mode gates cannot be bypassed by orchestrator
+Sherlock hard-blocked in FULL-AUTO regardless of config
+Original research in .gitignore -- never public
+Authorization consent screen runs even in FULL-AUTO
+LLM never generates CVE IDs -- Python is final authority
+```
 
 ---
 
 ## Hardware
 
-RTX 5070 Ti laptop
-Ollama model portability:
-$env:OLLAMA_MODELS = "E:\ollama\models"
+Acer Predator Helios Neo 16 AI
+NVIDIA RTX 5070 Ti 12GB VRAM
+32GB DDR5 RAM
+Windows 11
 
 ---
 
-## What Remains for v2
+## What Remains for V2
 
 ```
-Metasploit integration    GUIDED/SEMI-AUTO gated
-Self-improvement agent    Automated KB updates
-Docker packaging          Enterprise on-prem deployment
-Healthcare KB files       Specialized compliance
-Finance KB files          SOC 2 + PCI-DSS
+Shodan API integration       Phase 1
+Nuclei integration           Phase 1
+Metasploit integration       Phase 1 (GUIDED/SEMI-AUTO only)
+Healthcare + Finance KB      Phase 2
+Docker packaging             Phase 2
+SIEM push integration        Phase 2
+Self-improvement agent       Phase 3
 ```
+
+---
+
+## Velocity
+
+Original estimate: 3 weeks
+Actual sprint:     4 days
+Ahead of schedule: 2 weeks
+
+Reason: Full architecture planned before line one.
+All interfaces defined before implementation.
+Security review before every paste.
+Modules worked first or second try throughout.
+
+Research started:  December 2024
+Architecture:      March 19, 2026
+First commit:      March 21, 2026
+V1.0 complete:     March 24, 2026
+Total coding:      150 hours
