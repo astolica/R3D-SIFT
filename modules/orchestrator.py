@@ -38,6 +38,7 @@ Performance:
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
 
+from email import generator
 import json
 import re
 import time
@@ -907,7 +908,7 @@ class Orchestrator:
                 # Call the three methods individually and collect paths.
                 pdf_path       = generator.generate_pdf()
                 xlsx_path      = generator.generate_xlsx()
-                telemetry_path = generator.generate_telemetry_json()
+                telemetry_path = generator.generate_telemetry_log()
 
                 if pdf_path:
                     self.output_files["report_pdf"]       = pdf_path
