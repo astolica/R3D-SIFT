@@ -35,11 +35,6 @@ Performance:
     Progress heartbeat every 30 seconds on long ops
     Elapsed time tracked and reported
 
-Fixes applied:
-    Fix 1: OSINTProfile.load() -> from_dict() pattern
-    Fix 2: add_findings() -> loop with add_finding()
-    Fix 3: save_findings_json() wrapped in try/except
-
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
 
@@ -67,12 +62,11 @@ console = Console()
 BASE_DIR        = Path(__file__).parent.parent
 OUTPUT_DIR      = BASE_DIR / "output"
 ENGAGEMENTS_DIR = OUTPUT_DIR / "engagements"
-PROFILES_DIR    = OUTPUT_DIR / "profiles"
 
 # Timing
-MODULE_BUFFER      = 2     # seconds between modules
-HEARTBEAT_INTERVAL = 30    # seconds between heartbeat prints
-DEFAULT_TIMEOUT    = 2700  # 45 minutes in seconds
+MODULE_BUFFER       = 2     # seconds between modules
+HEARTBEAT_INTERVAL  = 30    # seconds between heartbeat prints
+DEFAULT_TIMEOUT     = 2700  # 45 minutes in seconds
 
 # AI relevant subdomain keywords for context filtering
 AI_RELEVANT_KEYWORDS = [
@@ -113,7 +107,6 @@ class Heartbeat:
     during long operations (nmap, Ollama).
     Operator sees the tool is alive not hung.
     Stops cleanly when operation completes.
-    daemon=True -- thread dies with main thread automatically.
     """
 
     def __init__(self, message: str = "Working"):
@@ -131,20 +124,20 @@ class Heartbeat:
         self._thread.start()
 
     def stop(self):
-        """Stop heartbeat thread cleanly."""
+        """Stop heartbeat thread."""
         self.running = False
         if self._thread:
             self._thread.join(timeout=2)
         console.print()  # newline after dots
 
     def _beat(self):
-        """Print status every HEARTBEAT_INTERVAL seconds."""
+        """Print dot every HEARTBEAT_INTERVAL seconds."""
         count = 0
         while self.running:
             time.sleep(HEARTBEAT_INTERVAL)
             if self.running:
-                count   += 1
-                elapsed  = count * HEARTBEAT_INTERVAL
+                count += 1
+                elapsed = count * HEARTBEAT_INTERVAL
                 console.print(
                     f"[dim]  {self.message}... "
                     f"{elapsed}s elapsed[/dim]"
@@ -166,24 +159,20 @@ class Orchestrator:
     Never bypasses GUIDED mode gates.
     Sherlock always blocked in FULL-AUTO.
     Target authorization required before any module runs.
-
-    Fix 1 applied: OSINTProfile resume uses from_dict()
-    Fix 2 applied: Aggregation uses add_finding() loop
-    Fix 3 applied: save_findings_json() in own try/except
     """
 
     def __init__(
         self,
         target:      str,
-        mode:        str            = "SEMI-AUTO",
-        full_scan:   bool           = False,
-        auto_attack: bool           = False,
-        org_type:    Optional[str]  = None,
-        resume:      bool           = False,
-        timeout:     int            = DEFAULT_TIMEOUT,
-        fast_mode:   bool           = False,
-        skip_llm:    bool           = False,
-        skip_trad:   bool           = False,
+        mode:        str  = "SEMI-AUTO",
+        full_scan:   bool = False,
+        auto_attack: bool = False,
+        org_type:    Optional[str] = None,
+        resume:      bool = False,
+        timeout:     int  = DEFAULT_TIMEOUT,
+        fast_mode:   bool = False,
+        skip_llm:    bool = False,
+        skip_trad:   bool = False,
     ):
         self.target      = target
         self.mode        = mode.upper()
@@ -199,34 +188,43 @@ class Orchestrator:
         # Generate engagement ID -- ties all outputs together
         self.engagement_id = _generate_engagement_id(target)
 
-        # Engagement directory -- state.json lives here
-        self.engagement_dir = (
-            ENGAGEMENTS_DIR / self.engagement_id
-        )
-        self.engagement_dir.mkdir(parents=True, exist_ok=True)
+        # State tracking -- init before resume check
+        self.state = {
+            "engagement_id": self.engagement_id,
+            "target":        self.target,
+            "mode":          self.mode,
+            "timestamp":     datetime.now().isoformat(),
+            "completed":     [],
+            "skipped":       [],
+            "in_progress":   None,
+            "org_type":      org_type,
+            "findings_count": 0,
+            "status":        "running",
+        }
+
+        # Defer directory creation until after resume check
+        # Prevents orphan empty engagement dirs on every resume
+        self.engagement_dir = None
 
         # Timing
         self.start_time = time.time()
 
-        # State tracking
-        self.state = {
-            "engagement_id":  self.engagement_id,
-            "target":         self.target,
-            "mode":           self.mode,
-            "timestamp":      datetime.now().isoformat(),
-            "completed":      [],
-            "skipped":        [],
-            "in_progress":    None,
-            "org_type":       org_type,
-            "findings_count": 0,
-            "status":         "running",
-        }
-
-        # All findings collected across all modules
+        # All findings collected across modules
         self.all_findings: list[Finding] = []
 
-        # Output paths returned at end
+        # Output paths collected across modules
         self.output_files = {}
+
+    def _init_engagement_dir(self):
+        """
+        Create engagement directory.
+        Called AFTER resume check so we use the correct ID.
+        Prevents orphan empty dirs when --resume is used.
+        """
+        self.engagement_dir = (
+            ENGAGEMENTS_DIR / self.engagement_id
+        )
+        self.engagement_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ #
     # CHECKPOINT
@@ -234,7 +232,8 @@ class Orchestrator:
 
     def _save_state(self, status: str = "running"):
         """
-        Save engagement state to disk after every module.
+        Save engagement state to disk.
+        Called after every module completes.
         Enables --resume to skip completed modules.
         Never raises -- state save failure is non-critical.
         """
@@ -243,23 +242,18 @@ class Orchestrator:
             self.state["elapsed_seconds"] = int(
                 time.time() - self.start_time
             )
-            state_path = (
-                self.engagement_dir / "state.json"
-            )
-            with open(
-                state_path, "w", encoding="utf-8"
-            ) as f:
+            state_path = self.engagement_dir / "state.json"
+            with open(state_path, "w", encoding="utf-8") as f:
                 json.dump(self.state, f, indent=2)
         except Exception as e:
             console.print(
-                f"[yellow]  State save failed: "
-                f"{e}[/yellow]"
+                f"[yellow]  State save failed: {e}[/yellow]"
             )
 
     def _load_state(self) -> Optional[dict]:
         """
         Load saved engagement state for resume.
-        Returns None if no saved state found.
+        Returns None if no state found.
         """
         try:
             safe_target = _sanitize_filename(self.target)
@@ -269,20 +263,14 @@ class Orchestrator:
                 )
             )
             if not candidates:
-                console.print(
-                    "[yellow]  No saved state found -- "
-                    "starting fresh[/yellow]"
-                )
                 return None
 
-            # Use most recent engagement for this target
             latest = max(
                 candidates,
                 key=lambda p: p.stat().st_mtime
             )
             with open(latest, encoding="utf-8") as f:
                 state = json.load(f)
-
             console.print(
                 f"[green]  Resumed: "
                 f"{state['engagement_id']}[/green]"
@@ -322,26 +310,26 @@ class Orchestrator:
     def _target_authorization_consent(self) -> bool:
         """
         Show target authorization consent screen.
-        Operator must type YES to confirm authorization.
+        Operator must explicitly confirm authorization.
         Required before any module runs -- even FULL-AUTO.
         Creates documented record of operator intent.
         This is legal protection -- not optional.
         """
         console.print(
             Panel(
-                f"[bold]Target:[/bold]  {self.target}\n"
-                f"[bold]Mode:[/bold]    {self.mode}\n"
-                f"[bold]Scan:[/bold]    "
-                f"{'Full (65535 ports)' if self.full_scan else 'Standard (1000 ports)'}\n"
-                f"[bold]ID:[/bold]      {self.engagement_id}\n\n"
+                f"[bold]Target:[/bold] {self.target}\n"
+                f"[bold]Mode:[/bold]   {self.mode}\n"
+                f"[bold]Scan:[/bold]   "
+                f"{'Full (65535 ports)' if self.full_scan else 'Standard (1000 ports)'}\n\n"
                 f"[yellow]You are about to run an autonomous "
                 f"security assessment.[/yellow]\n\n"
                 f"By proceeding you confirm:\n"
                 f"  • You own this target OR\n"
                 f"  • You have explicit written authorization\n"
-                f"  • You are in an approved lab environment\n\n"
-                f"[red]Unauthorized use violates the CFAA "
-                f"and equivalent laws.[/red]",
+                f"  • You are operating in an approved "
+                f"lab environment\n\n"
+                f"[red]Unauthorized use is illegal under "
+                f"the CFAA and equivalent laws.[/red]",
                 title=(
                     "[bold red]"
                     "AUTHORIZATION REQUIRED"
@@ -363,8 +351,7 @@ class Orchestrator:
 
         console.print(
             f"[green]  Authorization confirmed -- "
-            f"engagement {self.engagement_id} started"
-            f"[/green]\n"
+            f"engagement ID: {self.engagement_id}[/green]"
         )
         return True
 
@@ -379,16 +366,18 @@ class Orchestrator:
         Filter OSINTProfile before passing to LLM attack.
         Strips noise -- protects llama3:8b context window.
 
-        Keeps: live AI surfaces, AI-relevant subdomains,
-               tech stack (max 5), WAF status.
+        What stays:
+        - Live AI surfaces (max 10)
+        - AI-relevant subdomains only
+        - Tech stack (max 5)
+        - WAF detection status
 
-        Strips: dead subdomains, emails, usernames,
-                raw evidence paths, historical endpoints,
-                registrar info, DNS records.
-
-        Why: OSINT can find 500 subdomains and 50 emails.
-        Passing all that to the LLM fills the 8k context
-        window with noise and degrades output quality.
+        What gets stripped:
+        - Dead subdomains
+        - Emails and usernames (not needed for LLM attack)
+        - Raw evidence paths (local filesystem paths)
+        - Historical endpoints (mostly dead)
+        - Registrar, DNS records (not relevant)
         """
         ai_relevant_subs = [
             s for s in (profile.subdomains or [])
@@ -412,24 +401,16 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
 
     def _check_critical_findings(
-        self,
-        findings: list[Finding],
-        module:   str
+        self, findings: list[Finding], module: str
     ) -> bool:
         """
         Check for critical findings after each module.
-        GUIDED mode: alert and ask operator to continue.
-        SEMI-AUTO/FULL-AUTO: log and continue.
+        In GUIDED mode: alert operator and ask to continue.
+        In other modes: log and continue automatically.
         Returns True to continue, False to pause.
         """
-        critical  = [
-            f for f in findings
-            if f.severity_label == "CRITICAL"
-        ]
-        zero_days = [
-            f for f in findings
-            if f.zero_day_flag
-        ]
+        critical  = [f for f in findings if f.severity_label == "CRITICAL"]
+        zero_days = [f for f in findings if f.zero_day_flag]
 
         if not critical and not zero_days:
             return True
@@ -437,26 +418,24 @@ class Orchestrator:
         if critical:
             console.print(
                 f"\n[bold red]"
-                f"  ALERT: {len(critical)} CRITICAL "
+                f"⚠ CRITICAL: {len(critical)} critical "
                 f"finding(s) from {module}"
                 f"[/bold red]"
             )
             for f in critical[:3]:
-                console.print(
-                    f"[red]    • {f.title}[/red]"
-                )
+                console.print(f"[red]  • {f.title}[/red]")
 
         if zero_days:
             console.print(
                 f"\n[bold red]"
-                f"  ZERO DAY: {len(zero_days)} unclassified "
+                f"⚠ ZERO DAY: {len(zero_days)} unclassified "
                 f"finding(s) -- evidence preserved"
                 f"[/bold red]"
             )
 
         if self.mode == "GUIDED":
             response = input(
-                "\n  Continue engagement? [Y/N]: "
+                "\nContinue engagement? [Y/N]: "
             ).strip().upper()
             if response != "Y":
                 self._save_state("paused_critical_review")
@@ -470,17 +449,16 @@ class Orchestrator:
 
     def _check_timeout(self) -> bool:
         """
-        Check if engagement exceeded timeout budget.
-        Returns True if within budget.
-        Returns False and saves state if exceeded.
+        Check if engagement has exceeded timeout.
+        Returns True if still within budget.
+        Returns False if timeout exceeded.
         """
         elapsed = time.time() - self.start_time
         if elapsed > self.timeout:
             console.print(
                 f"\n[bold red]"
-                f"  Engagement timeout "
-                f"({self.timeout // 60} min). "
-                f"Stopping -- use --resume to continue."
+                f"Engagement timeout ({self.timeout // 60} min). "
+                f"Stopping after current module."
                 f"[/bold red]"
             )
             self._save_state("timeout")
@@ -491,16 +469,11 @@ class Orchestrator:
     # FINAL SUMMARY
     # ------------------------------------------------------------------ #
 
-    def _print_final_summary(
-        self,
-        aggregated,
-        elapsed: float
-    ):
+    def _print_final_summary(self, aggregated, elapsed: float):
         """
         Print clean final engagement summary.
-        One block at the end -- not scattered module output.
         Shows all output files, findings by severity,
-        elapsed time, completed and skipped modules.
+        and elapsed time.
         """
         minutes = int(elapsed // 60)
         seconds = int(elapsed % 60)
@@ -517,7 +490,6 @@ class Orchestrator:
             f"[/bold green]\n"
         )
 
-        # Findings summary table
         if aggregated:
             table = Table(title="Findings Summary")
             table.add_column("Severity", style="bold")
@@ -525,27 +497,16 @@ class Orchestrator:
 
             if aggregated.zero_day_count > 0:
                 table.add_row(
-                    "[bold red]ZERO DAY[/bold red]",
-                    f"[bold red]"
-                    f"{aggregated.zero_day_count}"
-                    f"[/bold red]"
+                    "[bold red]⚠ ZERO DAY[/bold red]",
+                    f"[bold red]{aggregated.zero_day_count}[/bold red]"
                 )
             table.add_row(
                 "[bold red]CRITICAL[/bold red]",
                 str(aggregated.critical_count)
             )
-            table.add_row(
-                "[red]HIGH[/red]",
-                str(aggregated.high_count)
-            )
-            table.add_row(
-                "[yellow]MEDIUM[/yellow]",
-                str(aggregated.medium_count)
-            )
-            table.add_row(
-                "[green]LOW[/green]",
-                str(aggregated.low_count)
-            )
+            table.add_row("[red]HIGH[/red]",         str(aggregated.high_count))
+            table.add_row("[yellow]MEDIUM[/yellow]", str(aggregated.medium_count))
+            table.add_row("[green]LOW[/green]",       str(aggregated.low_count))
             table.add_row("─────────", "─────")
             table.add_row(
                 "[bold]TOTAL[/bold]",
@@ -554,36 +515,30 @@ class Orchestrator:
             console.print(table)
             console.print()
 
-        # Output files
         if self.output_files:
             console.print("[bold]Output files:[/bold]")
             for file_type, path in self.output_files.items():
                 if file_type == "executive_summary":
                     continue
                 console.print(
-                    f"  [green]→[/green] "
-                    f"{file_type}: {path}"
+                    f"  [green]→[/green] {file_type}: {path}"
                 )
 
-        # Module status
         console.print(
             f"\n[dim]Completed: "
-            f"{', '.join(self.state['completed'])}"
-            f"[/dim]"
+            f"{', '.join(self.state['completed'])}[/dim]"
         )
         if self.state["skipped"]:
             skipped_names = [
-                s["module"]
-                for s in self.state["skipped"]
+                s["module"] for s in self.state["skipped"]
             ]
             console.print(
                 f"[dim]Skipped: "
-                f"{', '.join(skipped_names)}"
-                f"[/dim]"
+                f"{', '.join(skipped_names)}[/dim]"
             )
 
         console.print(
-            f"\n[dim]Engagement state: "
+            f"\n[dim]Engagement saved: "
             f"{self.engagement_dir}[/dim]"
         )
 
@@ -595,29 +550,40 @@ class Orchestrator:
         """
         Execute full R3D engagement.
 
+        Sequence:
+        1.  Authorization consent
+        2.  Resume or fresh start
+        3.  OSINT module
+        4.  LLM attack (if AI surfaces and not skipped)
+        5.  Traditional recon (if not skipped)
+        6.  Aggregation
+        7.  Verifier hook
+        8.  GRC mapper
+        9.  Report generation
+        10. Final summary
+
         Returns dict of all output file paths.
-        Each step wrapped in try/except.
-        No module failure stops the engagement --
-        it logs, saves state, and continues.
         """
         console.print(
             f"\n[bold cyan]"
             f"{'='*52}\n"
             f"  R3D AUTONOMOUS RED TEAM AGENT\n"
-            f"  Version   : 1.0\n"
-            f"  Target    : {self.target}\n"
-            f"  Mode      : {self.mode}\n"
+            f"  Version  : 1.0\n"
+            f"  Target   : {self.target}\n"
+            f"  Mode     : {self.mode}\n"
             f"  Engagement: {self.engagement_id}\n"
             f"{'='*52}"
             f"[/bold cyan]\n"
         )
 
         # Step 1 -- Authorization consent
-        # Runs even in FULL-AUTO -- legal protection
+        # Required before ANY module runs -- even FULL-AUTO
         if not self._target_authorization_consent():
             return {}
 
         # Step 2 -- Resume or fresh start
+        # Resolve engagement ID BEFORE creating directory
+        # Prevents orphan empty dirs on every resume
         if self.resume:
             saved = self._load_state()
             if saved:
@@ -626,6 +592,8 @@ class Orchestrator:
                 if saved.get("org_type"):
                     self.org_type = saved["org_type"]
 
+        # Now create directory with the correct engagement ID
+        self._init_engagement_dir()
         self._save_state("running")
 
         profile    = None
@@ -634,18 +602,15 @@ class Orchestrator:
         # ------------------------------------------------------------------ #
         # MODULE 1 -- OSINT
         # ------------------------------------------------------------------ #
-
         if self._is_completed("osint"):
             console.print(
-                "[dim]  OSINT: already completed "
-                "(resumed)[/dim]"
+                "[dim]  OSINT: already completed (resumed)[/dim]"
             )
-            # FIX 1: Use from_dict() not .load()
-            # OSINTProfile has from_dict() classmethod
-            # not a .load() classmethod
+            # FIX 1: OSINTProfile.load() doesn't exist.
+            # Load profile JSON manually and rebuild via from_dict().
             try:
                 profile_files = list(
-                    PROFILES_DIR.glob(
+                    (OUTPUT_DIR / "profiles").glob(
                         f"*{_sanitize_filename(self.target)}*"
                     )
                 )
@@ -654,21 +619,13 @@ class Orchestrator:
                         profile_files,
                         key=lambda p: p.stat().st_mtime
                     )
-                    with open(
-                        latest, encoding="utf-8"
-                    ) as f:
+                    with open(latest, encoding="utf-8") as f:
                         data = json.load(f)
                     profile = OSINTProfile.from_dict(data)
-                    console.print(
-                        f"[dim]  Profile loaded: "
-                        f"{latest.name}[/dim]"
-                    )
-            except Exception as e:
-                console.print(
-                    f"[yellow]  Profile load failed: "
-                    f"{e} -- continuing without[/yellow]"
-                )
-
+            except Exception:
+                # Non-fatal -- profile won't be available for
+                # LLM context filtering on resume but run continues
+                profile = None
         else:
             if not self._check_timeout():
                 return self.output_files
@@ -685,28 +642,24 @@ class Orchestrator:
                     mode=self.mode,
                     fast_mode=self.fast_mode
                 )
-                osint_findings, profile = recon.run()
+
+                # FIX 2: OSINTRecon.run() returns list[Finding], not a tuple.
+                # Profile lives on recon.profile -- not returned by run().
+                osint_findings = recon.run()
+                profile        = recon.profile
 
                 heartbeat.stop()
 
-                # Set org_type on profile if CLI provided
+                # Set org_type on profile if provided via CLI
                 if self.org_type and profile:
-                    try:
-                        profile.org_type = self.org_type
-                    except Exception:
-                        pass
+                    profile.org_type = self.org_type
 
-                self.all_findings.extend(
-                    osint_findings or []
-                )
-                self.state["osint_findings"] = len(
-                    osint_findings or []
-                )
+                self.all_findings.extend(osint_findings or [])
+                self.state["osint_findings"] = len(osint_findings or [])
 
                 console.print(
                     f"[green]  OSINT complete -- "
-                    f"{len(osint_findings or [])} "
-                    f"findings[/green]"
+                    f"{len(osint_findings or [])} findings[/green]"
                 )
 
                 if not self._check_critical_findings(
@@ -718,9 +671,7 @@ class Orchestrator:
 
             except Exception as e:
                 heartbeat.stop()
-                console.print(
-                    f"[red]  OSINT crashed: {e}[/red]"
-                )
+                console.print(f"[red]  OSINT crashed: {e}[/red]")
                 self._save_state("osint_failed")
 
         time.sleep(MODULE_BUFFER)
@@ -728,33 +679,21 @@ class Orchestrator:
         # ------------------------------------------------------------------ #
         # MODULE 2 -- LLM ATTACK
         # ------------------------------------------------------------------ #
-
         if self._is_completed("llm_attack"):
             console.print(
-                "[dim]  LLM attack: already completed "
-                "(resumed)[/dim]"
+                "[dim]  LLM attack: already completed (resumed)[/dim]"
             )
-
         elif self.skip_llm:
             console.print(
-                "[dim]  LLM attack: skipped "
-                "(--skip-llm)[/dim]"
+                "[dim]  LLM attack: skipped (--skip-llm)[/dim]"
             )
-            self._mark_skipped(
-                "llm_attack", "--skip-llm flag"
-            )
-
+            self._mark_skipped("llm_attack", "--skip-llm flag")
         elif not profile or not profile.ai_surfaces:
-            # Explicit message -- operator knows it skipped
-            # not that it ran and found nothing
             console.print(
                 "[dim]  LLM attack: skipped -- "
                 "no AI surfaces found by OSINT[/dim]"
             )
-            self._mark_skipped(
-                "llm_attack", "no AI surfaces found"
-            )
-
+            self._mark_skipped("llm_attack", "no AI surfaces")
         else:
             if not self._check_timeout():
                 return self.output_files
@@ -762,13 +701,11 @@ class Orchestrator:
             self.state["in_progress"] = "llm_attack"
             self._save_state()
 
-            # Filter profile -- protect context window
             filtered = self._filter_profile_for_llm(profile)
             console.print(
                 f"[dim]  LLM context: "
                 f"{len(filtered['ai_surfaces'])} surfaces, "
-                f"{len(filtered['subdomains'])} relevant "
-                f"subdomains passed[/dim]"
+                f"{len(filtered['subdomains'])} relevant subdomains[/dim]"
             )
 
             heartbeat = Heartbeat("LLM attack running")
@@ -780,23 +717,16 @@ class Orchestrator:
                     mode=self.mode,
                     auto_attack=self.auto_attack
                 )
-                llm_findings = llm_suite.run(
-                    filtered["ai_surfaces"]
-                )
+                llm_findings = llm_suite.run(filtered["ai_surfaces"])
 
                 heartbeat.stop()
 
-                self.all_findings.extend(
-                    llm_findings or []
-                )
-                self.state["llm_findings"] = len(
-                    llm_findings or []
-                )
+                self.all_findings.extend(llm_findings or [])
+                self.state["llm_findings"] = len(llm_findings or [])
 
                 console.print(
                     f"[green]  LLM attack complete -- "
-                    f"{len(llm_findings or [])} "
-                    f"findings[/green]"
+                    f"{len(llm_findings or [])} findings[/green]"
                 )
 
                 if not self._check_critical_findings(
@@ -808,32 +738,22 @@ class Orchestrator:
 
             except Exception as e:
                 heartbeat.stop()
-                console.print(
-                    f"[red]  LLM attack crashed: "
-                    f"{e}[/red]"
-                )
+                console.print(f"[red]  LLM attack crashed: {e}[/red]")
 
         time.sleep(MODULE_BUFFER)
 
         # ------------------------------------------------------------------ #
         # MODULE 3 -- TRADITIONAL RECON
         # ------------------------------------------------------------------ #
-
         if self._is_completed("traditional_recon"):
             console.print(
-                "[dim]  Traditional recon: already "
-                "completed (resumed)[/dim]"
+                "[dim]  Traditional recon: already completed (resumed)[/dim]"
             )
-
         elif self.skip_trad:
             console.print(
-                "[dim]  Traditional recon: skipped "
-                "(--skip-trad)[/dim]"
+                "[dim]  Traditional recon: skipped (--skip-trad)[/dim]"
             )
-            self._mark_skipped(
-                "traditional_recon", "--skip-trad flag"
-            )
-
+            self._mark_skipped("traditional_recon", "--skip-trad flag")
         else:
             if not self._check_timeout():
                 return self.output_files
@@ -841,9 +761,7 @@ class Orchestrator:
             self.state["in_progress"] = "traditional_recon"
             self._save_state()
 
-            heartbeat = Heartbeat(
-                "Traditional recon running"
-            )
+            heartbeat = Heartbeat("Traditional recon running")
             heartbeat.start()
 
             try:
@@ -852,31 +770,22 @@ class Orchestrator:
                     mode=self.mode,
                     full_scan=self.full_scan
                 )
-                # Use real profile or empty fallback
                 trad_findings = trad.run(
-                    profile or OSINTProfile(
-                        target=self.target
-                    )
+                    profile or OSINTProfile(target=self.target)
                 )
 
                 heartbeat.stop()
 
-                self.all_findings.extend(
-                    trad_findings or []
-                )
-                self.state["trad_findings"] = len(
-                    trad_findings or []
-                )
+                self.all_findings.extend(trad_findings or [])
+                self.state["trad_findings"] = len(trad_findings or [])
 
                 console.print(
                     f"[green]  Traditional recon complete -- "
-                    f"{len(trad_findings or [])} "
-                    f"findings[/green]"
+                    f"{len(trad_findings or [])} findings[/green]"
                 )
 
                 if not self._check_critical_findings(
-                    trad_findings or [],
-                    "Traditional Recon"
+                    trad_findings or [], "Traditional Recon"
                 ):
                     return self.output_files
 
@@ -885,89 +794,75 @@ class Orchestrator:
             except Exception as e:
                 heartbeat.stop()
                 console.print(
-                    f"[red]  Traditional recon crashed: "
-                    f"{e}[/red]"
+                    f"[red]  Traditional recon crashed: {e}[/red]"
                 )
 
         time.sleep(MODULE_BUFFER)
 
         # ------------------------------------------------------------------ #
         # AGGREGATION
-        # FIX 2: Use add_finding() loop not add_findings()
-        # FindingsAggregator only has add_finding() singular
         # ------------------------------------------------------------------ #
-
-        console.print(
-            "[cyan]  Aggregating all findings...[/cyan]"
-        )
+        console.print("\n[cyan]Aggregating all findings...[/cyan]")
 
         try:
-            aggregator = FindingsAggregator(
-                target=self.target
-            )
+            aggregator = FindingsAggregator(target=self.target)
 
-            # FIX 2: Loop with add_finding() not add_findings()
+            # FIX 3: FindingsAggregator only has add_finding() singular.
+            # Loop instead of calling add_findings() which doesn't exist.
             for f in self.all_findings:
                 aggregator.add_finding(f)
 
             aggregated = aggregator.aggregate()
 
-            self.state["findings_count"] = (
-                aggregated.total_findings
-            )
+            # FIX 4: save_findings_json() may not exist on aggregator.
+            # Wrap in try/except -- aggregation result is what matters.
+            # Falls back to manual json.dump if method missing.
+            try:
+                aggregator.save_findings_json(aggregated)
+            except AttributeError:
+                findings_path = self.engagement_dir / "findings.json"
+                with open(findings_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        [
+                            finding.to_dict()
+                            for finding in self.all_findings
+                            if hasattr(finding, "to_dict")
+                        ],
+                        f,
+                        indent=2
+                    )
+            except Exception:
+                pass  # non-critical -- state already saved
+
+            self.state["findings_count"] = aggregated.total_findings
             self._save_state()
 
-            console.print(
-                f"[green]  Aggregation complete -- "
-                f"{aggregated.total_findings} total "
-                f"findings[/green]"
-            )
-
         except Exception as e:
-            console.print(
-                f"[red]  Aggregation crashed: {e}[/red]"
-            )
+            console.print(f"[red]  Aggregation crashed: {e}[/red]")
             self._save_state("aggregation_failed")
             return self.output_files
 
-        # FIX 3: save_findings_json in own try/except
-        # Method may not exist -- non-critical if it fails
-        try:
-            aggregator.save_findings_json(aggregated)
-        except Exception:
-            pass  # Non-critical -- state already saved
-
         # ------------------------------------------------------------------ #
         # VERIFIER HOOK
-        # Placeholder -- calls verifier if built
-        # Fails gracefully if core/verifier.py not exists yet
         # ------------------------------------------------------------------ #
-
+        # Placeholder -- calls verifier if available.
+        # Fails silently if core/verifier.py not built yet.
         try:
             from core.verifier import Verifier
             verifier   = Verifier()
             aggregated = verifier.verify(aggregated)
-            console.print(
-                "[green]  Verifier: complete[/green]"
-            )
+            console.print("[green]  Verifier: complete[/green]")
         except ImportError:
-            console.print(
-                "[dim]  Verifier: not available yet[/dim]"
-            )
+            console.print("[dim]  Verifier: not available yet[/dim]")
         except Exception as e:
-            console.print(
-                f"[yellow]  Verifier failed: "
-                f"{e}[/yellow]"
-            )
+            console.print(f"[yellow]  Verifier failed: {e}[/yellow]")
 
         # ------------------------------------------------------------------ #
         # MODULE 4 -- GRC MAPPER
         # ------------------------------------------------------------------ #
-
         if self._is_completed("grc_mapper"):
             console.print(
-                "[dim]  GRC mapper: already completed "
-                "(resumed)[/dim]"
+                "[dim]  GRC mapper: already completed (resumed)[/dim]"
             )
         else:
             if not self._check_timeout():
@@ -977,13 +872,8 @@ class Orchestrator:
             self._save_state()
 
             try:
-                # Pass org_type to skip menu if already known
-                if self.org_type and profile:
-                    try:
-                        if not profile.org_type:
-                            profile.org_type = self.org_type
-                    except Exception:
-                        pass
+                if self.org_type and profile and not profile.org_type:
+                    profile.org_type = self.org_type
 
                 grc = GRCMapper(
                     target=self.target,
@@ -991,53 +881,52 @@ class Orchestrator:
                 )
                 grc_results = grc.run(
                     aggregated,
-                    profile or OSINTProfile(
-                        target=self.target
-                    )
+                    profile or OSINTProfile(target=self.target)
                 )
 
                 self.output_files.update(grc_results)
                 self._mark_completed("grc_mapper")
 
             except Exception as e:
-                console.print(
-                    f"[red]  GRC mapper crashed: "
-                    f"{e}[/red]"
-                )
+                console.print(f"[red]  GRC mapper crashed: {e}[/red]")
 
         # ------------------------------------------------------------------ #
         # REPORT GENERATION
         # ------------------------------------------------------------------ #
-
         if self._is_completed("report_gen"):
             console.print(
-                "[dim]  Reports: already generated "
-                "(resumed)[/dim]"
+                "[dim]  Reports: already generated (resumed)[/dim]"
             )
         else:
             self.state["in_progress"] = "report_gen"
             self._save_state()
 
             try:
-                generator    = ReportGenerator(aggregated)
-                report_files = generator.generate_all()
-                if report_files:
-                    self.output_files.update(report_files)
+                generator = ReportGenerator(aggregated)
+
+                # FIX 5: generate_all() doesn't exist on ReportGenerator.
+                # Call the three methods individually and collect paths.
+                pdf_path       = generator.generate_pdf()
+                xlsx_path      = generator.generate_xlsx()
+                telemetry_path = generator.generate_telemetry_json()
+
+                if pdf_path:
+                    self.output_files["report_pdf"]       = pdf_path
+                if xlsx_path:
+                    self.output_files["report_xlsx"]      = xlsx_path
+                if telemetry_path:
+                    self.output_files["report_telemetry"] = telemetry_path
+
                 self._mark_completed("report_gen")
-                console.print(
-                    "[green]  Reports: generated[/green]"
-                )
 
             except Exception as e:
                 console.print(
-                    f"[red]  Report generation crashed: "
-                    f"{e}[/red]"
+                    f"[red]  Report generation crashed: {e}[/red]"
                 )
 
         # ------------------------------------------------------------------ #
         # FINAL SUMMARY
         # ------------------------------------------------------------------ #
-
         elapsed = time.time() - self.start_time
         self._save_state("complete")
         self._print_final_summary(aggregated, elapsed)
@@ -1048,45 +937,37 @@ class Orchestrator:
 # ------------------------------------------------------------------ #
 # TEST
 # ------------------------------------------------------------------ #
-
 if __name__ == "__main__":
     console.print(
         "[bold green]R3D Orchestrator -- "
         "Module Load Test[/bold green]\n"
     )
     console.print(
-        "[yellow]This test only verifies module loads "
+        "[yellow]This test only checks module loads "
         "and engagement ID generation.[/yellow]\n"
-    )
-    console.print(
-        "[yellow]It does NOT run a full engagement.[/yellow]\n"
     )
 
     # Test engagement ID generation
     eid = _generate_engagement_id("example.com")
     console.print(f"Engagement ID: {eid}")
 
-    # Test Heartbeat -- 3 second demo
-    console.print("\nHeartbeat test (3 seconds):")
-    hb = Heartbeat("Testing heartbeat")
+    # Test Heartbeat
+    console.print("\nHeartbeat test (5 seconds):")
+    hb = Heartbeat("Testing")
     hb.start()
     time.sleep(3)
     hb.stop()
     console.print("Heartbeat: OK")
 
-    # Test orchestrator init only -- no run()
+    # Test orchestrator init only -- no actual run
     orch = Orchestrator(
         target="example.com",
         mode="SEMI-AUTO",
         full_scan=False,
         auto_attack=False,
     )
-    console.print(f"\nOrchestrator initialized:")
-    console.print(f"  Target : {orch.target}")
-    console.print(f"  Mode   : {orch.mode}")
-    console.print(f"  ID     : {orch.engagement_id}")
-    console.print(f"  Timeout: {orch.timeout // 60} min")
-
-    console.print(
-        "\n[green]Module loaded successfully.[/green]"
-    )
+    console.print("\nOrchestrator initialized:")
+    console.print(f"  Target: {orch.target}")
+    console.print(f"  Mode:   {orch.mode}")
+    console.print(f"  ID:     {orch.engagement_id}")
+    console.print("\n[green]Module loaded successfully.[/green]")
