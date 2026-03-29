@@ -282,9 +282,9 @@ class R3DReportPDF(FPDF):
         # Handles em dashes, special chars in findings
         font_regular, font_bold, font_italic = _get_font_paths()
         try:
-            self.add_font("Arial", "", font_regular, uni=True)
-            self.add_font("Arial", "B", font_bold, uni=True)
-            self.add_font("Arial", "I", font_italic, uni=True)
+            self.add_font("Arial", "", font_regular)
+            self.add_font("Arial", "B", font_bold)
+            self.add_font("Arial", "I", font_italic)
             self.font_name = "Arial"
         except Exception:
             # Fallback to Helvetica if font loading fails
