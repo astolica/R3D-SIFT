@@ -171,6 +171,26 @@ class Finding(BaseModel):
         """
         return v.lower().strip()
 
+    def model_post_init(self, __context):
+        """
+        After construction: if severity_score was not set (still 0.0)
+        look it up from BASE_SEVERITY table using finding_type.
+
+        Fix: default severity_score=0.0 caused findings with no
+        explicit score to land as INFO regardless of their type.
+        A prompt_injection with no score is still an 8, not a 0.
+        """
+        if self.severity_score == 0.0 and self.finding_type:
+            base = BASE_SEVERITY.get(
+                self.finding_type,
+                BASE_SEVERITY["default"]
+            )
+            # Use object.__setattr__ because pydantic model is frozen
+            try:
+                object.__setattr__(self, 'severity_score', float(base))
+            except Exception:
+                pass
+
 
 class AggregatedFindings(BaseModel):
     """

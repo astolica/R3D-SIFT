@@ -38,10 +38,54 @@ OUTPUT_PATH = BASE_DIR / "output"
 REPORTS_PATH = OUTPUT_PATH / "reports"
 
 # Font paths — Windows default
-# Linux/Mac fallback handled in generate_pdf()
+# Linux/Mac override handled in _get_font_paths()
 FONT_REGULAR = "C:\\Windows\\Fonts\\arial.ttf"
 FONT_BOLD = "C:\\Windows\\Fonts\\arialbd.ttf"
 FONT_ITALIC = "C:\\Windows\\Fonts\\ariali.ttf"
+
+
+def _get_font_paths() -> tuple:
+    """
+    Get font paths for current OS.
+    Windows uses Arial from system fonts.
+    Linux/Mac falls back to DejaVu if available, then Liberation.
+    Returns (regular, bold, italic) font paths.
+    """
+    import platform
+    system = platform.system()
+
+    if system == "Windows":
+        base = Path("C:/Windows/Fonts")
+        return (
+            str(base / "arial.ttf"),
+            str(base / "arialbd.ttf"),
+            str(base / "ariali.ttf")
+        )
+    elif system == "Linux":
+        # Try DejaVu first (installed on most Linux distros including Kali)
+        dejavu = Path("/usr/share/fonts/truetype/dejavu")
+        if dejavu.exists():
+            return (
+                str(dejavu / "DejaVuSans.ttf"),
+                str(dejavu / "DejaVuSans-Bold.ttf"),
+                str(dejavu / "DejaVuSans-Oblique.ttf")
+            )
+        # Liberation fonts (fallback)
+        liberation = Path("/usr/share/fonts/truetype/liberation")
+        return (
+            str(liberation / "LiberationSans-Regular.ttf"),
+            str(liberation / "LiberationSans-Bold.ttf"),
+            str(liberation / "LiberationSans-Italic.ttf")
+        )
+    else:
+        # macOS
+        base = Path("/Library/Fonts")
+        return (
+            str(base / "Arial.ttf"),
+            str(base / "Arial Bold.ttf"),
+            str(base / "Arial Italic.ttf")
+        )
+
 
 # NIST SP 800-53 control mapping
 NIST_MAPPING = {
@@ -90,7 +134,7 @@ NERC_CIP_MAPPING = {
 }
 
 # Remediation templates
-# TODO v2 -- replace with LLM-generated remediations via query_llm()
+# TODO v2 - replace with LLM-generated remediations via query_llm()
 REMEDIATION_TEMPLATES = {
     "prompt_injection": (
         "Implement input validation and output filtering on all LLM "
@@ -100,7 +144,7 @@ REMEDIATION_TEMPLATES = {
     ),
     "jailbreak": (
         "Apply multi-layer guardrail architecture. Single-session testing "
-        "is insufficient -- deploy red team suite with multi-turn sequences. "
+        "is insufficient - deploy red team suite with multi-turn sequences. "
         "Implement confidence thresholds that trigger human review."
     ),
     "trust_escalation": (
@@ -203,53 +247,67 @@ def _sanitize_filename(value: str, max_length: int = 30) -> str:
     return sanitized[:max_length]
 
 
-def _get_font_paths() -> tuple:
+def _sanitize_for_pdf(text: str, max_length: int = 2000) -> str:
     """
-    Get Unicode font paths for current OS.
-    Windows uses Arial. Linux uses DejaVu (available on Kali/Ubuntu).
-    Returns (regular, bold, italic) font paths.
-    """
-    import platform
-    system = platform.system()
+    Sanitize text before passing to fpdf multi_cell or cell.
 
-    if system == "Windows":
-        return (
-            "C:\\Windows\\Fonts\\arial.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf",
-            "C:\\Windows\\Fonts\\ariali.ttf"
-        )
-    else:
-        # Linux / macOS -- DejaVu is standard on Kali and Ubuntu
-        return (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf"
-        )
+    Fixes:
+    - Tab characters (\t) cause font missing glyph warning in fpdf
+      Replace with 4 spaces which render cleanly
+    - Null bytes crash fpdf entirely
+    - Control characters cause rendering artifacts
+    - Truncate to max_length to prevent right-side overflow on long lines
+
+    Called on every string before it touches the PDF renderer.
+    """
+    if not text:
+        return ""
+    # Replace tabs with spaces -- fpdf has no tab glyph
+    text = text.replace("\t", "    ")
+    # Strip null bytes and control chars except newline
+    text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', text)
+    # Truncate
+    return text[:max_length]
 
 
 class R3DReportPDF(FPDF):
     """
     Custom PDF class for R3D reports.
-    Uses Unicode fonts so all special characters render correctly.
+    Uses Arial Unicode font for full character support.
     """
 
+    def __init__(self):
+        super().__init__()
+        # Load Unicode fonts for full character support
+        # Handles em dashes, special chars in findings
+        font_regular, font_bold, font_italic = _get_font_paths()
+        try:
+            self.add_font("Arial", "", font_regular, uni=True)
+            self.add_font("Arial", "B", font_bold, uni=True)
+            self.add_font("Arial", "I", font_italic, uni=True)
+            self.font_name = "Arial"
+        except Exception:
+            # Fallback to Helvetica if font loading fails
+            # Em dashes will be replaced with hyphens in this case
+            self.font_name = "Helvetica"
+
     def header(self):
-        """Page header -- runs automatically on every page."""
-        self.set_font("ReportFont", "B", 10)
+        """Page header - runs automatically on every page."""
+        self.set_font(self.font_name, "B", 10)
         self.set_text_color(50, 50, 50)
-        self.cell(0, 8, "R3D -- Autonomous Red Team Agent", align="L")
-        self.set_font("ReportFont", "", 9)
+        self.cell(0, 8, "R3D - Autonomous Red Team Agent", align="L")
+        self.set_font(self.font_name, "", 9)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 8, "CONFIDENTIAL -- AUTHORIZED USE ONLY", align="R")
+        self.cell(0, 8, "CONFIDENTIAL - AUTHORIZED USE ONLY", align="R")
         self.ln(2)
         self.set_draw_color(200, 200, 200)
         self.line(10, self.get_y(), 200, self.get_y())
         self.ln(4)
 
     def footer(self):
-        """Page footer -- runs automatically on every page."""
+        """Page footer - runs automatically on every page."""
         self.set_y(-15)
-        self.set_font("ReportFont", "", 8)
+        self.set_font(self.font_name, "", 8)
         self.set_text_color(150, 150, 150)
         self.cell(
             0, 10,
@@ -260,7 +318,7 @@ class R3DReportPDF(FPDF):
     def section_title(self, title: str):
         """Styled section heading with underline."""
         self.ln(4)
-        self.set_font("ReportFont", "B", 13)
+        self.set_font(self.font_name, "B", 13)
         self.set_text_color(30, 30, 30)
         self.cell(0, 8, title, ln=True)
         self.set_draw_color(50, 50, 50)
@@ -271,7 +329,10 @@ class R3DReportPDF(FPDF):
         """
         Render one complete finding block.
         Color coded by severity. Zero day findings get warning label.
-        fpdf2 auto_page_break handles mid-block overflow automatically.
+
+        Fix: _sanitize_for_pdf() applied to all text fields before
+        rendering. Prevents tab char glyph warnings and right-side
+        overflow on long unbroken strings.
         """
         colors = {
             "CRITICAL": (220, 50, 50),
@@ -282,16 +343,28 @@ class R3DReportPDF(FPDF):
         }
         color = colors.get(finding.severity_label, (100, 100, 100))
 
+        # Sanitize all text fields before touching renderer
+        title       = _sanitize_for_pdf(finding.title, 150)
+        description = _sanitize_for_pdf(finding.description, 1500)
+        mitre       = _sanitize_for_pdf(
+            f"{finding.mitre_technique or 'N/A'} - "
+            f"{finding.mitre_technique_name or 'N/A'}", 100
+        )
+        owasp       = _sanitize_for_pdf(
+            f"{finding.owasp_category or 'N/A'} - "
+            f"{finding.owasp_category_name or 'N/A'}", 100
+        )
+
         # Severity colored header bar
         self.set_fill_color(*color)
         self.set_text_color(255, 255, 255)
-        self.set_font("ReportFont", "B", 10)
+        self.set_font(self.font_name, "B", 10)
         label = f"  [{finding.severity_label}]"
         if finding.zero_day_flag:
             label += " ZERO DAY FLAG"
         self.cell(
             0, 7,
-            f"{index}. {finding.title}{label}",
+            f"{index}. {title}{label}",
             fill=True, ln=True
         )
 
@@ -299,39 +372,33 @@ class R3DReportPDF(FPDF):
         self.ln(1)
 
         # Description
-        self.set_font("ReportFont", "B", 9)
+        self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "Description:", ln=False)
-        self.set_font("ReportFont", "", 9)
-        self.multi_cell(0, 5, finding.description)
+        self.set_font(self.font_name, "", 9)
+        self.multi_cell(0, 5, description)
 
         # MITRE
-        self.set_font("ReportFont", "B", 9)
+        self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "MITRE ATT&CK:", ln=False)
-        self.set_font("ReportFont", "", 9)
-        self.cell(
-            0, 5,
-            f"{finding.mitre_technique} - {finding.mitre_technique_name}",
-            ln=True
-        )
+        self.set_font(self.font_name, "", 9)
+        self.cell(0, 5, mitre, ln=True)
 
         # OWASP
-        self.set_font("ReportFont", "B", 9)
+        self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "OWASP:", ln=False)
-        self.set_font("ReportFont", "", 9)
-        self.cell(
-            0, 5,
-            f"{finding.owasp_category} - {finding.owasp_category_name}",
-            ln=True
-        )
+        self.set_font(self.font_name, "", 9)
+        self.cell(0, 5, owasp, ln=True)
 
         # CVE if present
         if finding.cve_id:
-            self.set_font("ReportFont", "B", 9)
+            self.set_font(self.font_name, "B", 9)
             self.cell(35, 5, "CVE:", ln=False)
-            self.set_font("ReportFont", "", 9)
+            self.set_font(self.font_name, "", 9)
             self.cell(
                 0, 5,
-                f"{finding.cve_id} (CVSS: {finding.cvss_score})",
+                _sanitize_for_pdf(
+                    f"{finding.cve_id} (CVSS: {finding.cvss_score})", 60
+                ),
                 ln=True
             )
 
@@ -339,33 +406,35 @@ class R3DReportPDF(FPDF):
         nist = NIST_MAPPING.get(
             finding.finding_type, NIST_MAPPING["default"]
         )
-        self.set_font("ReportFont", "B", 9)
+        self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "NIST SP 800-53:", ln=False)
-        self.set_font("ReportFont", "", 9)
+        self.set_font(self.font_name, "", 9)
         self.cell(0, 5, " | ".join(nist), ln=True)
 
         # NERC CIP
         nerc = NERC_CIP_MAPPING.get(
             finding.finding_type, NERC_CIP_MAPPING["default"]
         )
-        self.set_font("ReportFont", "B", 9)
+        self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "NERC CIP:", ln=False)
-        self.set_font("ReportFont", "", 9)
+        self.set_font(self.font_name, "", 9)
         self.cell(0, 5, " | ".join(nerc), ln=True)
 
         # Remediation
-        remediation = REMEDIATION_TEMPLATES.get(
-            finding.finding_type,
-            REMEDIATION_TEMPLATES["default"]
+        remediation = _sanitize_for_pdf(
+            REMEDIATION_TEMPLATES.get(
+                finding.finding_type,
+                REMEDIATION_TEMPLATES["default"]
+            ), 800
         )
-        self.set_font("ReportFont", "B", 9)
+        self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "Remediation:", ln=False)
-        self.set_font("ReportFont", "", 9)
+        self.set_font(self.font_name, "", 9)
         self.multi_cell(0, 5, remediation)
 
         # Zero day evidence note
         if finding.zero_day_flag and finding.evidence_preserved:
-            self.set_font("ReportFont", "I", 8)
+            self.set_font(self.font_name, "I", 8)
             self.set_text_color(150, 50, 50)
             self.cell(
                 0, 5,
@@ -415,7 +484,7 @@ class ReportGenerator:
             results["telemetry"] = telemetry_path
 
         console.print(
-            f"\n[bold green]Reports generated -- "
+            f"\n[bold green]Reports generated - "
             f"{len(results)} files[/bold green]"
         )
         for file_type, path in results.items():
@@ -426,39 +495,29 @@ class ReportGenerator:
     def generate_pdf(self) -> Optional[str]:
         """
         Generate executive PDF report.
-        Uses Unicode fonts for full character support.
-
         Structure:
         - Cover page
         - Executive summary
         - Findings sorted by priority
         - Methodology and disclaimer
 
-        TODO v2 -- generate executive summary via query_llm()
+        TODO v2 - generate executive summary via query_llm()
         """
         try:
-            font_regular, font_bold, font_italic = _get_font_paths()
-
             pdf = R3DReportPDF()
-
-            # Load Unicode fonts -- supports all special characters
-            pdf.add_font("ReportFont", "", font_regular, uni=True)
-            pdf.add_font("ReportFont", "B", font_bold, uni=True)
-            pdf.add_font("ReportFont", "I", font_italic, uni=True)
-
             pdf.set_auto_page_break(auto=True, margin=15)
             pdf.add_page()
 
             # COVER PAGE
             pdf.ln(20)
-            pdf.set_font("ReportFont", "B", 24)
+            pdf.set_font(pdf.font_name, "B", 24)
             pdf.set_text_color(30, 30, 30)
             pdf.cell(
                 0, 12, "R3D Red Team Assessment",
                 align="C", ln=True
             )
 
-            pdf.set_font("ReportFont", "", 14)
+            pdf.set_font(pdf.font_name, "", 14)
             pdf.set_text_color(80, 80, 80)
             pdf.cell(
                 0, 8, f"Target: {self.target}",
@@ -475,7 +534,7 @@ class ReportGenerator:
             )
 
             pdf.ln(10)
-            pdf.set_font("ReportFont", "B", 11)
+            pdf.set_font(pdf.font_name, "B", 11)
             pdf.set_text_color(30, 30, 30)
             pdf.cell(0, 7, "Findings Summary", align="C", ln=True)
             pdf.ln(2)
@@ -490,16 +549,16 @@ class ReportGenerator:
             ]
 
             for label, value in summary_data:
-                pdf.set_font("ReportFont", "B", 10)
+                pdf.set_font(pdf.font_name, "B", 10)
                 pdf.cell(80, 6, label, align="R")
-                pdf.set_font("ReportFont", "", 10)
+                pdf.set_font(pdf.font_name, "", 10)
                 pdf.cell(0, 6, value, ln=True)
 
             # EXECUTIVE SUMMARY
             pdf.add_page()
             pdf.section_title("Executive Summary")
 
-            pdf.set_font("ReportFont", "", 10)
+            pdf.set_font(pdf.font_name, "", 10)
             pdf.set_text_color(30, 30, 30)
 
             summary_text = (
@@ -548,9 +607,9 @@ class ReportGenerator:
             pdf.add_page()
             pdf.section_title("Methodology and Disclaimer")
 
-            pdf.set_font("ReportFont", "B", 10)
+            pdf.set_font(pdf.font_name, "B", 10)
             pdf.cell(0, 6, "Assessment Methodology", ln=True)
-            pdf.set_font("ReportFont", "", 9)
+            pdf.set_font(pdf.font_name, "", 9)
             pdf.multi_cell(0, 5, (
                 "This assessment was conducted using R3D, an autonomous "
                 "red team agent running locally on authorized hardware. "
@@ -565,9 +624,9 @@ class ReportGenerator:
             ))
 
             pdf.ln(4)
-            pdf.set_font("ReportFont", "B", 10)
+            pdf.set_font(pdf.font_name, "B", 10)
             pdf.cell(0, 6, "Disclaimer", ln=True)
-            pdf.set_font("ReportFont", "", 9)
+            pdf.set_font(pdf.font_name, "", 9)
             pdf.multi_cell(0, 5, (
                 "This report was generated for authorized security assessment "
                 "purposes only. All testing was conducted within approved "
@@ -598,6 +657,7 @@ class ReportGenerator:
         """
         Generate XLSX risk register.
         Full compliance document with NIST and NERC CIP mappings.
+        Auto-sized columns for readability.
         """
         try:
             rows = []
@@ -688,9 +748,9 @@ class ReportGenerator:
                 "scan_end":         self.scan_end,
                 "r3d_version":      "1.0",
                 "total_findings":   self.aggregated.total_findings,
-                "generated_by":     "R3D Agent v1.0 -- HumdoesCyber",
+                "generated_by":     "R3D Agent v1.0 - HumdoesCyber",
                 "purpose": (
-                    "Blue team artifact -- correlate against SIEM logs "
+                    "Blue team artifact - correlate against SIEM logs "
                     "to validate detection coverage"
                 ),
                 "actions": []
@@ -760,7 +820,7 @@ if __name__ == "__main__":
             target="test-target.com"
         ),
         Finding(
-            title="CVE-2021-41773 Apache path traversal",
+            title="CVE-2021-41773 - Apache path traversal",
             description=(
                 "Apache 2.4.49 vulnerable to path traversal and "
                 "remote code execution. CVSS 9.8 Critical."
@@ -783,9 +843,9 @@ if __name__ == "__main__":
             target="test-target.com"
         ),
         Finding(
-            title="Unclassified service possible zero day",
+            title="Unclassified service - possible zero day",
             description=(
-                "CustomApp 0.0.1 no CVE match found in local "
+                "CustomApp 0.0.1 - no CVE match found in local "
                 "database or NVD. Manual investigation required."
             ),
             finding_type="zero_day",

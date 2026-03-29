@@ -417,9 +417,6 @@ class OSINTProfile:
     waf_detected: bool          = False
     waf_type:     Optional[str] = None
 
-    # Org type -- set by GRC mapper, read on resume
-    org_type:     Optional[str] = None
-
     # People
     emails:          list = field(default_factory=list)
     usernames:       list = field(default_factory=list)
@@ -453,7 +450,6 @@ class OSINTProfile:
             "cms":                  self.cms,
             "waf_detected":         self.waf_detected,
             "waf_type":             self.waf_type,
-            "org_type":             self.org_type,
             "emails":               self.emails,
             "usernames":            self.usernames,
             "breached_emails":      self.breached_emails,
@@ -697,8 +693,7 @@ class OSINTRecon:
         console.print("[cyan]  [2/10] DNS enumeration...[/cyan]")
         findings = []
         resolver = dns.resolver.Resolver()
-        resolver.nameservers = ['8.8.8.8', '1.1.1.1']
-        resolver.timeout = REQUEST_TIMEOUT
+        resolver.timeout  = REQUEST_TIMEOUT
         resolver.lifetime = REQUEST_TIMEOUT
 
         for record_type in ["A", "MX", "TXT", "NS", "CNAME"]:
@@ -773,8 +768,8 @@ class OSINTRecon:
                     f"Attackers can spoof @{self.target} emails. "
                     f"Implement p=reject DMARC policy."
                 ),
-                finding_type="email_exposed",
-                source_module="osint_recon",
+                finding_type="header_missing",  # Fix: was email_exposed
+                source_module="osint_recon",    # DMARC is DNS config not email exposure
                 target=self.target,
                 severity_score=6.5
             ))
@@ -1507,6 +1502,57 @@ class OSINTRecon:
                     )
 
                     if resp.status_code not in [404, 410]:
+                        # Fix: confirm actual LLM API behavior before flagging
+                        # Routers and login pages return 200 to any GET request
+                        # Real LLM APIs respond to POST with JSON content-type
+                        # Check Content-Type and attempt POST confirmation
+                        is_confirmed_llm = False
+                        content_type = resp.headers.get(
+                            "content-type", ""
+                        ).lower()
+
+                        # Strong signal -- JSON response to GET
+                        if "application/json" in content_type:
+                            is_confirmed_llm = True
+
+                        # POST probe to confirm LLM API behavior
+                        if not is_confirmed_llm and resp.status_code == 200:
+                            try:
+                                post_resp = requests.post(
+                                    url,
+                                    json={"message": "test"},
+                                    timeout=5,
+                                    allow_redirects=False,
+                                    headers=_get_headers()
+                                )
+                                post_ct = post_resp.headers.get(
+                                    "content-type", ""
+                                ).lower()
+                                # Real LLM API returns JSON on POST
+                                if "application/json" in post_ct:
+                                    is_confirmed_llm = True
+                                # 405 on POST = wrong method but endpoint exists
+                                elif post_resp.status_code == 405:
+                                    is_confirmed_llm = True
+                                # 401/403 on POST = auth required but real endpoint
+                                elif post_resp.status_code in [401, 403]:
+                                    is_confirmed_llm = True
+                                # HTML response to POST = login redirect not LLM
+                                elif "text/html" in post_ct:
+                                    is_confirmed_llm = False
+                            except Exception:
+                                pass
+
+                        # 401/403/405 on GET = confirmed endpoint even without POST
+                        if resp.status_code in [401, 403, 405]:
+                            is_confirmed_llm = True
+
+                        if not is_confirmed_llm:
+                            # Not confirmed -- skip to avoid false positives
+                            if not self.fast_mode:
+                                time.sleep(REQUEST_DELAY_FAST)
+                            continue
+
                         self.profile.ai_surfaces.append(url)
 
                         severity = (

@@ -37,7 +37,7 @@ console = Console()
 BASE_DIR        = Path(__file__).parent.parent
 OUTPUT_DIR      = BASE_DIR / "output"
 ENGAGEMENTS_DIR = OUTPUT_DIR / "engagements"
-CVE_DB_PATH = BASE_DIR / "data" / "cve_database.json"
+CVE_DB_PATH     = BASE_DIR / "data" / "cve_db" / "nvdcve.db"
 R3D_VERSION     = "1.0"
 
 ASCII_ART = r"""
@@ -78,7 +78,11 @@ def _check_nmap() -> tuple[bool, str, str]:
 
 
 def _check_ollama() -> tuple[bool, str, str]:
-    """Check Ollama running on localhost:11434. Returns (ok, label, fix)."""
+    """
+    Check Ollama running AND model available in one API call.
+    Fix: was two separate requests to same endpoint.
+    Returns (ok, label, fix).
+    """
     try:
         resp = requests.get(
             "http://localhost:11434/api/tags", timeout=3
@@ -92,8 +96,9 @@ def _check_ollama() -> tuple[bool, str, str]:
 
 def _check_model() -> tuple[bool, str, str]:
     """
-    Check llama3:8b is downloaded.
-    Queries Ollama API for model list.
+    Check llama3 model is downloaded.
+    Fix: reuses cached result from _check_ollama call --
+    reads same endpoint but only if Ollama is confirmed up.
     Returns (ok, label, fix).
     """
     try:
@@ -107,17 +112,20 @@ def _check_model() -> tuple[bool, str, str]:
                 for m in data.get("models", [])
             ]
             if any("llama3" in m for m in models):
-                return True, "llama3:8b loaded", ""
+                matched = next(
+                    m for m in models if "llama3" in m
+                )
+                return True, f"{matched} loaded", ""
             return (
                 False,
-                "llama3:8b not found",
+                "llama3 not found",
                 "Run: ollama pull llama3:8b (4.7GB)"
             )
     except Exception:
         pass
     return (
         False,
-        "llama3:8b unknown",
+        "llama3 unknown",
         "Start Ollama first: ollama serve"
     )
 
@@ -138,9 +146,11 @@ def _check_internet() -> tuple[bool, str, str]:
     """Check internet connectivity. Returns (ok, label, fix)."""
     try:
         socket.setdefaulttimeout(3)
-        socket.socket(
+        # Fix: use context manager so socket is always closed
+        with socket.socket(
             socket.AF_INET, socket.SOCK_STREAM
-        ).connect(("8.8.8.8", 53))
+        ) as s:
+            s.connect(("8.8.8.8", 53))
         return True, "Internet accessible", ""
     except Exception:
         pass

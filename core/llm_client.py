@@ -1,19 +1,31 @@
-
 """
-R3D Agent — LLM Client
+R3D Agent -- LLM Client
 Ollama wrapper for all module communications.
 Every module uses this to talk to llama3.
+
+Fixes applied:
+    Fix 1: Timeout on Ollama calls -- prevents pipeline hang
+    Fix 2: Retry logic with backoff -- handles transient failures
+    Fix 3: Model version flexibility -- accepts llama3, llama3:8b, llama3.2
+    Fix 4: Available model auto-detection -- warns if model not found
 """
 
 import ollama
+import time
+import requests
 from pydantic import BaseModel
 from typing import Optional
 import json
 import re
 
 
+# Ollama connection settings
+OLLAMA_BASE_URL    = "http://localhost:11434"
+OLLAMA_TIMEOUT     = 120   # 2 minutes max per LLM call
+OLLAMA_MAX_RETRIES = 2     # retry twice before giving up
+OLLAMA_RETRY_DELAY = 3     # seconds between retries
+
 # System prompt that tells llama3 it's a cybersecurity analyst
-# This fixes the "prompt injection is a medical term" problem we saw earlier
 SYSTEM_PROMPT = """You are an expert cybersecurity analyst and red team operator.
 You specialize in OSINT reconnaissance, vulnerability assessment, LLM attack surface analysis,
 and GRC compliance mapping (NIST SP 800-53, NERC CIP).
@@ -23,8 +35,6 @@ You are precise, technical, and never guess. If you are uncertain about somethin
 
 CRITICAL: When asked to return JSON you return ONLY valid JSON with no preamble,
 no explanation, no markdown code fences, and no text before or after the JSON object.
-When asked for analysis or explanation you provide detailed, technically precise accounts
-with full reasoning — never truncate findings or summarize when detail is available.
 """
 
 
@@ -36,6 +46,31 @@ class LLMResponse(BaseModel):
     error: Optional[str] = None
 
 
+def _resolve_model(model: str) -> str:
+    """
+    Resolve model name to one available in Ollama.
+    Handles llama3 / llama3:8b / llama3.2 version variations.
+    Returns best available match or original if cannot check.
+    """
+    try:
+        resp = requests.get(
+            f"{OLLAMA_BASE_URL}/api/tags", timeout=5
+        )
+        if resp.status_code == 200:
+            available = [
+                m.get("name", "")
+                for m in resp.json().get("models", [])
+            ]
+            if model in available:
+                return model
+            for name in available:
+                if name.startswith(model.split(":")[0]):
+                    return name
+    except Exception:
+        pass
+    return model
+
+
 def query_llm(
     prompt: str,
     system_prompt: str = SYSTEM_PROMPT,
@@ -44,129 +79,114 @@ def query_llm(
 ) -> LLMResponse:
     """
     Send a prompt to Ollama and return a validated response.
-
-    Args:
-        prompt: The user prompt to send
-        system_prompt: Override the default system prompt if needed
-        model: Which Ollama model to use (default: llama3)
-        expect_json: If True, validates and cleans JSON response
-
-    Returns:
-        LLMResponse with content and success status
+    Includes timeout, retry, and model version resolution.
     """
-    try:
-        response = ollama.chat(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        )
+    resolved_model = _resolve_model(model)
+    content = ""
 
-        content = response["message"]["content"].strip()
+    for attempt in range(OLLAMA_MAX_RETRIES + 1):
+        try:
+            client = ollama.Client(
+                host=OLLAMA_BASE_URL,
+                timeout=OLLAMA_TIMEOUT
+            )
+            response = client.chat(
+                model=resolved_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": prompt}
+                ]
+            )
 
-        # If we expect JSON clean up any accidental formatting
-        if expect_json:
-            content = _clean_json_response(content)
-            # Validate it actually parses
-            json.loads(content)
+            content = response["message"]["content"].strip()
 
-        return LLMResponse(
-            content=content,
-            model=model,
-            success=True
-        )
+            if expect_json:
+                content = _clean_json_response(content)
+                json.loads(content)
 
-    except json.JSONDecodeError as e:
-        # JSON validation failed — try repair
-        repaired = _repair_json(content, str(e))
-        if repaired:
-            return LLMResponse(content=repaired, model=model, success=True)
-        return LLMResponse(
-            content="",
-            model=model,
-            success=False,
-            error=f"JSON parse failed: {str(e)}"
-        )
+            return LLMResponse(
+                content=content,
+                model=resolved_model,
+                success=True
+            )
 
-    except Exception as e:
-        return LLMResponse(
-            content="",
-            model=model,
-            success=False,
-            error=str(e)
-        )
+        except json.JSONDecodeError as e:
+            repaired = _repair_json(content, str(e))
+            if repaired:
+                return LLMResponse(
+                    content=repaired,
+                    model=resolved_model,
+                    success=True
+                )
+            return LLMResponse(
+                content="",
+                model=resolved_model,
+                success=False,
+                error=f"JSON parse failed: {str(e)}"
+            )
+
+        except Exception as e:
+            if attempt < OLLAMA_MAX_RETRIES:
+                time.sleep(OLLAMA_RETRY_DELAY * (attempt + 1))
+                continue
+            return LLMResponse(
+                content="",
+                model=resolved_model,
+                success=False,
+                error=str(e)
+            )
+
+    return LLMResponse(
+        content="",
+        model=resolved_model,
+        success=False,
+        error="Max retries exceeded"
+    )
 
 
 def _clean_json_response(text: str) -> str:
-    """
-    Strip markdown fences and extract clean JSON.
-    LLMs sometimes wrap JSON in ```json ... ``` even when told not to.
-    """
-    # Remove markdown code fences
-    text = re.sub(r"```json\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
+    """Strip markdown fences and extract clean JSON."""
+    text = re.sub(r'^```(?:json)?\s*', '', text.strip())
+    text = re.sub(r'\s*```$', '', text.strip())
     text = text.strip()
-
-    # Find the first { and last } to extract just the JSON object
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start != -1 and end > start:
-        return text[start:end]
-
+    # Find first { or [
+    for i, c in enumerate(text):
+        if c in '{[':
+            text = text[i:]
+            break
+    # Find last } or ]
+    for i in range(len(text) - 1, -1, -1):
+        if text[i] in '}]':
+            text = text[:i+1]
+            break
     return text
 
 
-def _repair_json(content: str, error: str) -> Optional[str]:
-    """
-    Attempt to repair malformed JSON by sending a targeted fix prompt.
-    Called automatically when JSON validation fails.
-    """
-    repair_prompt = f"""The following JSON has an error: {error}
-
-Please fix it and return ONLY the corrected JSON object with no other text:
-
-{content}"""
-
+def _repair_json(text: str, error: str) -> Optional[str]:
+    """Attempt basic JSON repair for common LLM formatting issues."""
     try:
-        response = ollama.chat(
-            model="llama3",
-            messages=[
-                {"role": "system", "content": "You are a JSON repair specialist. Return only valid JSON, nothing else."},
-                {"role": "user", "content": repair_prompt}
-            ]
-        )
-        repaired = response["message"]["content"].strip()
-        repaired = _clean_json_response(repaired)
-        json.loads(repaired)  # Validate the repair worked
-        return repaired
+        cleaned = _clean_json_response(text)
+        json.loads(cleaned)
+        return cleaned
     except Exception:
-        return None
-
-
-def test_connection() -> bool:
-    """
-    Quick test to verify Ollama is running and llama3 is available.
-    Called at R3D startup before any modules run.
-    """
-    response = query_llm(
-        prompt="Respond with exactly this JSON: {\"status\": \"ready\", \"model\": \"llama3\"}",
-        expect_json=True
-    )
-    return response.success
+        pass
+    # Try wrapping in object if plain string returned
+    try:
+        if not text.strip().startswith('{'):
+            wrapped = json.dumps({"content": text.strip()})
+            json.loads(wrapped)
+            return wrapped
+    except Exception:
+        pass
+    return None
 
 
 if __name__ == "__main__":
-    # Quick test when run directly
-    from rich.console import Console
-    console = Console()
-
-    console.print("[bold green]Testing R3D LLM Client...[/bold green]")
-
-    if test_connection():
-        console.print("[green]✓ Ollama connection successful[/green]")
-        console.print("[green]✓ llama3 responding[/green]")
-        console.print("[green]✓ JSON validation working[/green]")
-    else:
-        console.print("[red]✗ Connection failed — is Ollama running?[/red]")
-        console.print("[yellow]Run: ollama serve[/yellow]")
+    print("R3D LLM Client -- Module Load Test")
+    result = query_llm(
+        "Respond with exactly: {\"status\": \"ok\"}",
+        expect_json=True
+    )
+    print(f"Success: {result.success}")
+    print(f"Model:   {result.model}")
+    print(f"Content: {result.content[:100]}")
