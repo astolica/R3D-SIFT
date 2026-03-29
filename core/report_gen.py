@@ -330,9 +330,10 @@ class R3DReportPDF(FPDF):
         Render one complete finding block.
         Color coded by severity. Zero day findings get warning label.
 
-        Fix: _sanitize_for_pdf() applied to all text fields before
-        rendering. Prevents tab char glyph warnings and right-side
-        overflow on long unbroken strings.
+        Layout: every field uses consistent two-line pattern:
+            LABEL (bold, full width, ln=True)
+            value (normal, indented 10 units, multi_cell)
+        This avoids all cursor position bugs from ln=False pattern.
         """
         colors = {
             "CRITICAL": (220, 50, 50),
@@ -343,20 +344,24 @@ class R3DReportPDF(FPDF):
         }
         color = colors.get(finding.severity_label, (100, 100, 100))
 
-        # Sanitize all text fields before touching renderer
+        # Sanitize all text before touching renderer
         title       = _sanitize_for_pdf(finding.title, 150)
         description = _sanitize_for_pdf(finding.description, 1500)
-        
         mitre_tech  = finding.mitre_technique or "N/A"
         mitre_name  = finding.mitre_technique_name or "N/A"
-        mitre       = _sanitize_for_pdf(
-        f"{mitre_tech} - {mitre_name}", 100
+        mitre       = _sanitize_for_pdf(f"{mitre_tech} - {mitre_name}", 100)
+        owasp_cat   = finding.owasp_category or "N/A"
+        owasp_name  = finding.owasp_category_name or "N/A"
+        owasp       = _sanitize_for_pdf(f"{owasp_cat} - {owasp_name}", 100)
+
+        nist = NIST_MAPPING.get(finding.finding_type, NIST_MAPPING["default"])
+        nerc = NERC_CIP_MAPPING.get(finding.finding_type, NERC_CIP_MAPPING["default"])
+        remediation = _sanitize_for_pdf(
+            REMEDIATION_TEMPLATES.get(
+                finding.finding_type, REMEDIATION_TEMPLATES["default"]
+            ), 800
         )
-        
-        owasp       = _sanitize_for_pdf(
-            f"{finding.owasp_category or 'N/A'} - "
-            f"{finding.owasp_category_name or 'N/A'}", 100
-        )
+        left_margin = self.l_margin
 
         # Severity colored header bar
         self.set_fill_color(*color)
@@ -365,82 +370,38 @@ class R3DReportPDF(FPDF):
         label = f"  [{finding.severity_label}]"
         if finding.zero_day_flag:
             label += " ZERO DAY FLAG"
-        self.cell(
-            0, 7,
-            f"{index}. {title}{label}",
-            fill=True, ln=True
-        )
-
+        self.cell(0, 7, f"{index}. {title}{label}", fill=True, ln=True)
         self.set_text_color(30, 30, 30)
         self.ln(1)
 
-        # Description
-        self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "Description:", ln=False)
-        self.set_font(self.font_name, "", 9)
-        self.multi_cell(0, 5, description)
-
-        # MITRE
-        self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "MITRE ATT&CK:", ln=True)
-        self.set_font(self.font_name, "", 9)
-        self.cell(35, 5, "", ln=False)
-        self.multi_cell(0, 5, mitre)
-
-        # OWASP
-        self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "OWASP:", ln=True)
-        self.set_font(self.font_name, "", 9)
-        self.cell(35, 5, "", ln=False)
-        self.multi_cell(0, 5, owasp)
-
-        # CVE if present
-        if finding.cve_id:
+        def field(label_text, value_text):
+            """Render one label + value pair. Label bold, value indented."""
             self.set_font(self.font_name, "B", 9)
-            self.cell(35, 5, "CVE:", ln=False)
+            self.set_x(left_margin)
+            self.cell(0, 5, label_text, ln=True)
             self.set_font(self.font_name, "", 9)
-            self.cell(
-                0, 5,
-                _sanitize_for_pdf(
-                    f"{finding.cve_id} (CVSS: {finding.cvss_score})", 60
-                ),
-                ln=True
+            self.set_x(left_margin + 10)
+            self.multi_cell(0, 5, value_text)
+            self.set_x(left_margin)
+
+        field("Description:", description)
+        field("MITRE ATT&CK:", mitre)
+        field("OWASP:", owasp)
+
+        if finding.cve_id:
+            cve_text = _sanitize_for_pdf(
+                f"{finding.cve_id} (CVSS: {finding.cvss_score})", 60
             )
+            field("CVE:", cve_text)
 
-        # NIST controls
-        nist = NIST_MAPPING.get(
-            finding.finding_type, NIST_MAPPING["default"]
-        )
-        self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "NIST SP 800-53:", ln=False)
-        self.set_font(self.font_name, "", 9)
-        self.cell(0, 5, " | ".join(nist), ln=True)
+        field("NIST SP 800-53:", " | ".join(nist))
+        field("NERC CIP:", " | ".join(nerc))
+        field("Remediation:", remediation)
 
-        # NERC CIP
-        nerc = NERC_CIP_MAPPING.get(
-            finding.finding_type, NERC_CIP_MAPPING["default"]
-        )
-        self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "NERC CIP:", ln=False)
-        self.set_font(self.font_name, "", 9)
-        self.cell(0, 5, " | ".join(nerc), ln=True)
-
-        # Remediation
-        remediation = _sanitize_for_pdf(
-            REMEDIATION_TEMPLATES.get(
-                finding.finding_type,
-                REMEDIATION_TEMPLATES["default"]
-            ), 800
-        )
-        self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "Remediation:", ln=False)
-        self.set_font(self.font_name, "", 9)
-        self.multi_cell(0, 5, remediation)
-
-        # Zero day evidence note
         if finding.zero_day_flag and finding.evidence_preserved:
             self.set_font(self.font_name, "I", 8)
             self.set_text_color(150, 50, 50)
+            self.set_x(left_margin)
             self.cell(
                 0, 5,
                 f"Raw evidence preserved at: "
