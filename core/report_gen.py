@@ -382,14 +382,16 @@ class R3DReportPDF(FPDF):
 
         # MITRE
         self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "MITRE ATT&CK:", ln=False)
+        self.cell(35, 5, "MITRE ATT&CK:", ln=True)
         self.set_font(self.font_name, "", 9)
+        self.cell(35, 5, "", ln=False)
         self.multi_cell(0, 5, mitre)
 
         # OWASP
         self.set_font(self.font_name, "B", 9)
-        self.cell(35, 5, "OWASP:", ln=False)
+        self.cell(35, 5, "OWASP:", ln=True)
         self.set_font(self.font_name, "", 9)
+        self.cell(35, 5, "", ln=False)
         self.multi_cell(0, 5, owasp)
 
         # CVE if present
