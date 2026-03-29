@@ -241,7 +241,7 @@ class FindingsAggregator:
         across runs (changes each Python startup by design).
         """
         key = f"{finding.finding_type}:{finding.target}:{finding.title}"
-        return hashlib.md5(key.encode()).hexdigest()[:8]
+        return hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()[:8]
 
     def _deduplicate(self, findings: List[Finding]) -> List[Finding]:
         """

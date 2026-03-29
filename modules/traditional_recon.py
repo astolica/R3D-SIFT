@@ -999,14 +999,14 @@ class TraditionalRecon:
                         "Host":       self.target,
                         "User-Agent": "Mozilla/5.0"
                     },
-                    verify=False
+                    verify=False  # nosec B501
                 )
 
                 waf_resp = requests.get(
                     f"https://{self.target}",
                     timeout=REQUEST_TIMEOUT,
                     headers={"User-Agent": "Mozilla/5.0"},
-                    verify=False
+                    verify=False  # nosec B501
                 )
 
                 if (
@@ -1052,7 +1052,7 @@ class TraditionalRecon:
                         "User-Agent": "Mozilla/5.0",
                         **header
                     },
-                    verify=False
+                    verify=False  # nosec B501
                 )
             except Exception:
                 pass

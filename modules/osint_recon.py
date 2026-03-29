@@ -825,10 +825,11 @@ class OSINTRecon:
         async def run_probes():
             semaphore = asyncio.Semaphore(ASYNC_CONCURRENCY)
             async with httpx.AsyncClient(
-                verify=False,
+                verify=False,  # nosec B501 -- intentional, probing subdomains with self-signed certs
                 timeout=REQUEST_TIMEOUT,
                 follow_redirects=True
             ) as client:
+
                 tasks = [
                     self._probe_subdomain(client, sub, semaphore)
                     for sub in all_subdomains
