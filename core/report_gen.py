@@ -346,10 +346,13 @@ class R3DReportPDF(FPDF):
         # Sanitize all text fields before touching renderer
         title       = _sanitize_for_pdf(finding.title, 150)
         description = _sanitize_for_pdf(finding.description, 1500)
+        
+        mitre_tech  = finding.mitre_technique or "N/A"
+        mitre_name  = finding.mitre_technique_name or "N/A"
         mitre       = _sanitize_for_pdf(
-            f"{finding.mitre_technique or 'N/A'} - "
-            f"{finding.mitre_technique_name or 'N/A'}", 100
+        f"{mitre_tech} - {mitre_name}", 100
         )
+        
         owasp       = _sanitize_for_pdf(
             f"{finding.owasp_category or 'N/A'} - "
             f"{finding.owasp_category_name or 'N/A'}", 100
@@ -381,13 +384,13 @@ class R3DReportPDF(FPDF):
         self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "MITRE ATT&CK:", ln=False)
         self.set_font(self.font_name, "", 9)
-        self.cell(0, 5, mitre, ln=True)
+        self.multi_cell(0, 5, mitre)
 
         # OWASP
         self.set_font(self.font_name, "B", 9)
         self.cell(35, 5, "OWASP:", ln=False)
         self.set_font(self.font_name, "", 9)
-        self.cell(0, 5, owasp, ln=True)
+        self.multi_cell(0, 5, owasp)
 
         # CVE if present
         if finding.cve_id:
