@@ -696,6 +696,11 @@ class OSINTRecon:
         resolver.timeout  = REQUEST_TIMEOUT
         resolver.lifetime = REQUEST_TIMEOUT
 
+        # Fix: fallback nameservers if system DNS fails
+        # ISP DNS servers often timeout on external domains
+        # 8.8.8.8 = Google, 1.1.1.1 = Cloudflare
+        resolver.nameservers = ["8.8.8.8", "1.1.1.1"]
+
         for record_type in ["A", "MX", "TXT", "NS", "CNAME"]:
             try:
                 answers = resolver.resolve(self.target, record_type)
