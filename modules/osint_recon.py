@@ -691,6 +691,17 @@ class OSINTRecon:
             return []
 
         console.print("[cyan]  [2/10] DNS enumeration...[/cyan]")
+
+        # Fix: skip DNS/DMARC on private IPs
+        # RFC1918 addresses have no public DNS records
+        import ipaddress
+        try:
+            if ipaddress.ip_address(self.target).is_private:
+                console.print("[dim]    DNS skipped -- private IP[/dim]")
+                return []
+        except ValueError:
+            pass  # domain name -- continue
+
         findings = []
         resolver = dns.resolver.Resolver()
         resolver.timeout  = REQUEST_TIMEOUT
@@ -1218,6 +1229,16 @@ class OSINTRecon:
             return []
 
         console.print("[cyan]  [5/10] Wayback Machine...[/cyan]")
+        # Fix: skip Wayback on private IPs
+        # archive.org doesn't index private IP addresses
+        import ipaddress
+        try:
+            if ipaddress.ip_address(self.target).is_private:
+                console.print("[dim]    Wayback skipped -- private IP[/dim]")
+                return []
+        except ValueError:
+            pass  # domain name -- continue
+
         findings = []
 
         try:
