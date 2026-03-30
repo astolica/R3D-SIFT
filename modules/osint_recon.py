@@ -1436,10 +1436,15 @@ class OSINTRecon:
                         ))
 
                 # HTML + header fingerprinting
+                # Fix: skip tech already captured in server header
+                # prevents duplicate "Apache" findings when server
+                # header and HTML both contain the same technology
+                server_lower = server.lower() if server else ""
                 for tech, sigs in TECH_SIGNATURES.items():
                     if (
                         any(sig in combined for sig in sigs) and
-                        tech not in self.profile.tech_stack
+                        tech not in self.profile.tech_stack and
+                        tech.lower() not in server_lower
                     ):
                         self.profile.tech_stack.append(tech)
                         findings.append(Finding(
