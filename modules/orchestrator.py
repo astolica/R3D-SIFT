@@ -602,7 +602,7 @@ class Orchestrator:
         console.print(
             f"\n[bold cyan]"
             f"{'='*52}\n"
-            f"  R3D AUTONOMOUS RED TEAM AGENT\n"
+            f"  R3D AUTONOMOUS PURPLE TEAM AGENT\n"
             f"  Version  : 1.0\n"
             f"  Target   : {self.target}\n"
             f"  Mode     : {self.mode}\n"

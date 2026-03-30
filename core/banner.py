@@ -226,7 +226,7 @@ def show_banner(skip_checks: bool = False):
 
     commit = _get_commit_hash()
     console.print(
-        f"[bold]R3D Autonomous Red Team Agent[/bold]  "
+        f"[bold]R3D Autonomous Purple Team Agent[/bold]  "
         f"[dim]v{R3D_VERSION} ({commit})[/dim]\n"
         f"[dim]Author: HumdoesCyber -- "
         f"Authorized use only[/dim]\n"
