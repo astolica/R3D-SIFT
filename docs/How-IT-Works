@@ -1,0 +1,168 @@
+# R3D -- How It Works
+## A to Z Technical Breakdown
+### Author: Humza Sheikh (HumdoesCyber)
+
+Every module. Every step. What is happening in the background.
+
+---
+
+## Phase 0 -- Startup
+
+`banner.py` runs before anything else. Six dependency checks, each independent. One failure never prevents the others from running.
+
+- **Python 3.10+** -- runs `sys.version_info`. Fails if version too old.
+- **Nmap** -- runs `subprocess nmap --version`. Must be in PATH.
+- **Ollama running** -- HTTP GET to `localhost:11434/api/tags`.
+- **llama3 model** -- same API call reads model list, checks llama3 is present.
+- **CVE database** -- checks `data/cve_database.json` exists on disk. 129MB.
+- **Internet** -- opens socket to 8.8.8.8 port 53. Connect = internet working.
+
+---
+
+## Phase 1 -- Authorization
+
+`orchestrator.py` shows a consent screen before anything touches the target. Reads your input -- if not exactly YES it exits. If YES it creates the engagement directory, generates a unique engagement ID, and saves initial `state.json`.
+
+This runs even in FULL-AUTO mode. Cannot be bypassed. Creates a documented record that you confirmed authorization before any module ran.
+
+---
+
+## Phase 2 -- OSINT Reconnaissance (10 Checks)
+
+Passive information gathering. No active probing. All 10 checks are independent -- one failure never stops the others.
+
+### [1/10] WHOIS Lookup
+Calls `python-whois` against the public WHOIS database. Extracts registrar, dates, nameservers, and registrant org. Domains expiring within 90 days raise a finding -- domain hijacking risk.
+
+### [2/10] DNS Enumeration
+Queries A, MX, TXT, NS, and CNAME records using `8.8.8.8` and `1.1.1.1` as fallback nameservers to avoid ISP DNS timeouts. Separately queries `_dmarc.target.com` -- if missing raises an email spoofing finding. Private IPs (RFC1918) are skipped automatically.
+
+### [3/10] Subdomain Discovery
+Two sources simultaneously. `crt.sh` certificate transparency logs reveal subdomains from every SSL cert ever issued. Then 90 common subdomain names are probed asynchronously (10 concurrent connections, HTTPS first then HTTP fallback). Sensitive subdomains (admin, staging, dev, git, jenkins) are auto-elevated to HIGH.
+
+### [4/10] Google Dorking
+Runs 20 pre-built dorks: exposed documents, admin panels, config files, API endpoints, sensitive strings. Anti-detection via rotating user agents and random jitter. Google blocks automation quickly -- R3D detects 429 and switches automatically to DuckDuckGo for remaining dorks.
+
+### [5/10] Wayback Machine
+Queries archive.org CDX API for up to 500 historical URLs. Checks each for sensitive keywords: admin, login, api, config, backup, .env, .git, password, secret, token. Historical endpoints may still be live. Private IPs are skipped automatically.
+
+### [6/10] Tech Stack Detection
+One HTTP request (HTTPS first, HTTP fallback). WAF detection runs first against 8 vendor signatures. Then checks 15 tech signatures against the full response. Server header read for version disclosure. Missing security headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) each become findings. Duplicate suppression: tech already reported in server header is not re-created from HTML fingerprint.
+
+### [7/10] AI Surface Detection
+Probes 30 endpoint signatures. GET first -- 404 means skip. Then POST confirmation with JSON body. Returns JSON or 401/403/405 = confirmed LLM API. Returns HTML = login redirect = not a real LLM, skipped. This two-step process eliminates false positives from routers and login pages.
+
+### [8/10] Email Harvesting
+Scrapes 10 public pages plus top 5 subdomains. Regex finds email addresses matching target domain. Filters generic addresses (noreply, support, info, admin). Real employee emails extracted -- usernames queued for Sherlock.
+
+### [9/10] Breach Checking
+HIBP checks each harvested email against known breaches (requires paid API key, skips cleanly without). GitHub search runs 5 queries looking for repositories that accidentally committed credentials containing the target domain.
+
+### [10/10] Sherlock Username Enumeration
+Runs `sherlock-project` via subprocess against 300+ platforms. Hard rules: never in FULL-AUTO, separate explicit consent required, max 5 usernames, 60 second timeout each, input sanitized before passing.
+
+---
+
+## Phase 3 -- LLM Attack Suite
+
+Only executes if OSINT found confirmed AI surfaces. Three tiers run in sequence.
+
+### Tier 1 -- Static Payload Library
+30 pre-built attack strings across 8 categories: direct injection, role confusion, context manipulation, jailbreak attempts, data exfiltration probes, system prompt extraction, persona hijacking, boundary testing. Each scored and tagged to MITRE ATLAS. Deterministic -- no Ollama needed.
+
+### Tier 2 -- KB-Guided Adaptive Payloads
+Ollama reads KB files (MITRE ATLAS, OWASP LLM Top 10, jailbreak patterns) and generates novel payloads adapted to what Tier 1 found. If the target blocked role confusion in Tier 1, Tier 2 generates different categories. Adapts to the specific guardrail behavior of the surface.
+
+### Tier 3 -- Original Research Sequences
+TEP-005 (Contextual Trust Accumulation) is an 8-turn sequence that builds trust across conversation turns then exploits it. TEP-010 (Relational State Exploitation) uses commitment traps. No single turn looks malicious in isolation -- the attack emerges from the sequence as a whole. Single-turn content filters do not detect it. Authorized installations only. `original_research.md` is gitignored and never public.
+
+---
+
+## Phase 4 -- Traditional Reconnaissance (8 Checks)
+
+### [1-3/8] Port Scan + Service Detection + CVE Correlation
+Three steps in one Nmap call. Port scan finds open ports (top 1000 default, all 65535 with `--full-scan`). Service detection identifies what is running and what version. CVE correlation searches the local 295,406-entry NVD database per versioned service. Unmatched services flagged as potential zero day candidates.
+
+### [4/8] SSL/TLS Audit
+Checks protocol versions (TLS 1.0 and 1.1 flagged deprecated), certificate expiry, issuer, hostname mismatch, and cipher suite weakness.
+
+### [5/8] Security Headers
+Six critical headers checked: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy. Each missing header becomes its own finding.
+
+### [6/8] Endpoint Discovery
+49 common paths probed: admin panels, API endpoints, sensitive files (.env, .git, backup.zip, db.sql), debug interfaces. Non-404 response = finding. High-value paths auto-elevated to HIGH.
+
+### [7/8] JavaScript Bundle Analysis
+Downloads JS files and parses with regex patterns: AWS keys (AKIA pattern), API tokens, database connection strings, internal URLs, password variables. Developers frequently leave credentials hardcoded from development in production JS bundles.
+
+### [8/8] WAF Bypass Attempt
+Only runs if OSINT detected a WAF. Sends X-Forwarded-For and X-Real-IP headers, checks DNS history for origin IP exposure, compares WAF vs origin response content. Bypass confirmed = real attack surface accessible without WAF protection.
+
+---
+
+## Phase 5 -- Findings Aggregation
+
+`findings.py` collects everything. MD5 dedup: same finding from two modules becomes one. MITRE ATT&CK and OWASP mappings applied automatically at creation time. Severity scoring from BASE_SEVERITY lookup with CVSS override for CVE findings. Sorted CRITICAL first through INFO.
+
+---
+
+## Phase 6 -- Verifier
+
+Only touches LLM attack findings. OSINT and traditional pass through unchanged -- they are Python-authoritative.
+
+- **CVE validation** -- queries NVD API directly. 404 = strip CVE. Timeout = fail open, keep.
+- **Severity sanity** -- below 3.0 removed. Below 5.0 flagged uncertain.
+- **Evidence check** -- confirms conversation log exists on disk.
+- **Semantic dedup** -- difflib first (0.85 threshold) then Ollama semantic pass.
+
+Removed findings saved to `verification_report.json`. Nothing is silently discarded.
+
+---
+
+## Phase 7 -- GRC Compliance Mapping
+
+Org type selection loads only relevant frameworks. NIST AI RMF auto-loads if AI surfaces were found regardless of org type. Per finding: control IDs mapped from Python lookup tables, due dates calculated (CRITICAL 7 days, HIGH 30, MEDIUM 90, LOW 180). Ollama generates plain English executive summary grounded in KB context. Falls back to template if Ollama unavailable. Critical infrastructure reports include NERC CIP financial penalty context -- up to $1M per day per violation.
+
+---
+
+## Phase 8 -- Report Generation
+
+Five outputs from one AggregatedFindings object:
+
+- **PDF executive report** -- cover page, executive summary, color-coded finding blocks (MITRE, OWASP, NIST, NERC CIP, remediation per finding), methodology and disclaimer page.
+- **XLSX risk register** -- one row per finding, all framework mappings, due dates, CVSS scores. Auditor-ready.
+- **XLSX compliance map** -- one sheet per framework, control gaps mapped to findings.
+- **JSON telemetry log** -- every action timestamped with MITRE attribution. SIEM ingestion format.
+- **JSON verification report** -- full audit trail of what the quality gate reviewed and decided.
+
+---
+
+## Phase 9 -- Improvement Engine
+
+Run separately: `python main.py --improve`
+Requires 3+ prior engagements to have data to analyze.
+
+The engine reads the last 10 verification reports and builds a trend table showing findings count, removal rate, and stability trend per engagement. It then analyzes patterns: payloads that consistently get blocked and removed, KB gaps where findings keep getting flagged as uncertain, severity calibration drift over time.
+
+Ranked suggestions are generated in three priority tiers. CRITICAL suggestions are for payloads or KB entries actively degrading output quality. HIGH suggestions are for patterns seen 3+ times across engagements. MEDIUM are calibration and polish items.
+
+Each suggestion is shown one at a time. The operator types Y to approve or N to skip. Nothing is auto-modified under any circumstance. Approved suggestions are logged to `output/improvement_log.json` with timestamp and rationale. The operator manually applies the changes -- the tool tells you what to fix, it does not fix itself.
+
+This is the anti-cognitive-surrender mechanism. The AI flags its own failure patterns. The human decides what to do about them. The audit trail proves the human made the decision.
+
+---
+
+## Accountability Architecture Summary
+
+Every phase of R3D enforces human accountability:
+
+```
+Phase 1    Authorization gate -- documented consent before any action
+Phase 6    Verifier -- LLM output validated by Python and NVD
+Phase 9    Improvement engine -- human approves every KB change
+All        Telemetry log -- every action timestamped, MITRE tagged
+All        Engagement ID -- complete chain of custody, one run one ID
+```
+
+The AI executes at speed. The human decides at every gate.
+That is not a design preference -- it is how R3D was engineered.
