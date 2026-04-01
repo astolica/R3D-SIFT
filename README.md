@@ -75,77 +75,77 @@ The full thinking behind this is in `docs/my-approach.md`.
 ## Architecture
 
 ```
-       python main.py --target example.com --mode guided
-          │
-          ▼
-      ┌─────────────────────────────────────────────────────┐
-      │  CORE LAYER                                         │
-      │  banner.py              Wizard terminal UI          │
-      │  findings.py            MITRE ATT&CK + OWASP mapping│
-      │  llm_client.py          Ollama wrapper              │
-      │  cve_engine.py          NVD CVE correlation         │
-      │  report_gen.py          PDF + XLSX + telemetry      │
-      │  verifier.py            Hallucination detection     │
-      │  improvement_engine.py  Self-improvement loop       │
-      └─────────────────────────────────────────────────────┘
-            │
-            ▼
-      ┌─────────────────────────────────────────────────────┐
-      │  MODULE PIPELINE                                    │
-      │                                                     │
-      │  1. osint_recon.py      -- PASSIVE RECON            │
-      │     WHOIS, DNS, subdomain enumeration               │
-      │     Google/DuckDuckGo dorking (auto-fallback)       │
-      │     Certificate transparency logs                   │
-      │     Email harvesting + breach checking (HIBP)       │
-      │     Sherlock username enumeration (GUIDED only)     │
-      │     Tech stack fingerprinting                       │
-      │     WAF detection (8 vendor signatures)             │
-      │     AI surface discovery (30+ endpoint signatures)  │
-      │     Rate limiter -- prevents accidental DoS         │
-      │                                                     │
-      │  2. llm_attack.py       -- LLM ATTACK SUITE         │
-      │     Only runs when AI surfaces discovered           │
-      │     Tier 1: 30 static payloads (8 categories)       │
-      │             MITRE ATLAS tagged, scored              │
-      │     Tier 2: KB-guided adaptive via Ollama RAG       │
-      │             Adapts to what Tier 1 found             │
-      │     Tier 3: Original research sequences             │
-      │             TEP-005: Contextual Trust Accumulation  │
-      │             TEP-010: Relational State Exploitation  │
-      │             Outside OWASP LLM Top 10 (2025)         │
-      │             Authorized installations only           │
-      │                                                     │
-      │  3. traditional_recon.py -- ACTIVE RECON            │
-      │     Port scan (top 1000 default / all 65535)        │
-      │     Service version detection                       │
-      │     CVE correlation (295,406 CVEs local NVD)        │
-      │     SSL/TLS audit + certificate expiry              │
-      │     Security header deep analysis (CSP quality)     │
-      │     49-path endpoint discovery                      │
-      │     JavaScript bundle secret scanning               │
-      │     WAF bypass attempt (only if WAF detected)       │
-      │                                                     │
-      │  4. grc_mapper.py       -- COMPLIANCE MAPPING       │
-      │     Org type selection (5 types)                    │
-      │     Loads only relevant frameworks -- fast          │
-      │     Risk register XLSX with due dates               │
-      │     Compliance map XLSX (one sheet per framework)   │
-      │     Executive summary via Ollama                    │
-      │     NERC CIP financial penalty context included     │
-      └─────────────────────────────────────────────────────┘
-            │
-            ▼
-      ┌─────────────────────────────────────────────────────┐
-      │  OUTPUT LAYER                                       │
-      │  PDF executive report    Board/CISO ready           │
-      │  XLSX risk register      MITRE + OWASP + frameworks │
-      │  XLSX compliance map     One sheet per framework    │
-      │  JSON telemetry log      SIEM ingestion artifact    │
-      │  Verification report     Hallucination audit trail  │
-      │  Improvement log         Approved KB suggestions    │
-      └─────────────────────────────────────────────────────┘
-```
+                  python main.py --target example.com --mode guided
+                      │
+                      ▼
+                  ┌─────────────────────────────────────────────────────┐
+                  │  CORE LAYER                                         │
+                  │  banner.py              Wizard terminal UI          │
+                  │  findings.py            MITRE ATT&CK + OWASP mapping│
+                  │  llm_client.py          Ollama wrapper              │
+                  │  cve_engine.py          NVD CVE correlation         │
+                  │  report_gen.py          PDF + XLSX + telemetry      │
+                  │  verifier.py            Hallucination detection     │
+                  │  improvement_engine.py  Self-improvement loop       │
+                  └─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+                  ┌─────────────────────────────────────────────────────┐
+                  │  MODULE PIPELINE                                    │
+                  │                                                     │
+                  │  1. osint_recon.py      -- PASSIVE RECON            │
+                  │     WHOIS, DNS, subdomain enumeration               │
+                  │     Google/DuckDuckGo dorking (auto-fallback)       │
+                  │     Certificate transparency logs                   │
+                  │     Email harvesting + breach checking (HIBP)       │
+                  │     Sherlock username enumeration (GUIDED only)     │
+                  │     Tech stack fingerprinting                       │
+                  │     WAF detection (8 vendor signatures)             │
+                  │     AI surface discovery (30+ endpoint signatures)  │
+                  │     Rate limiter -- prevents accidental DoS         │
+                  │                                                     │
+                  │  2. llm_attack.py       -- LLM ATTACK SUITE         │
+                  │     Only runs when AI surfaces discovered           │
+                  │     Tier 1: 30 static payloads (8 categories)       │
+                  │             MITRE ATLAS tagged, scored              │
+                  │     Tier 2: KB-guided adaptive via Ollama RAG       │
+                  │             Adapts to what Tier 1 found             │
+                  │     Tier 3: Original research sequences             │
+                  │             TEP-005: Contextual Trust Accumulation  │
+                  │             TEP-010: Relational State Exploitation  │
+                  │             Outside OWASP LLM Top 10 (2025)         │
+                  │             Authorized installations only           │
+                  │                                                     │
+                  │  3. traditional_recon.py -- ACTIVE RECON            │
+                  │     Port scan (top 1000 default / all 65535)        │
+                  │     Service version detection                       │
+                  │     CVE correlation (295,406 CVEs local NVD)        │
+                  │     SSL/TLS audit + certificate expiry              │
+                  │     Security header deep analysis (CSP quality)     │
+                  │     49-path endpoint discovery                      │
+                  │     JavaScript bundle secret scanning               │
+                  │     WAF bypass attempt (only if WAF detected)       │
+                  │                                                     │
+                  │  4. grc_mapper.py       -- COMPLIANCE MAPPING       │
+                  │     Org type selection (5 types)                    │
+                  │     Loads only relevant frameworks -- fast          │
+                  │     Risk register XLSX with due dates               │
+                  │     Compliance map XLSX (one sheet per framework)   │
+                  │     Executive summary via Ollama                    │
+                  │     NERC CIP financial penalty context included     │
+                  └─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+                  ┌─────────────────────────────────────────────────────┐
+                  │  OUTPUT LAYER                                       │
+                  │  PDF executive report    Board/CISO ready           │
+                  │  XLSX risk register      MITRE + OWASP + frameworks │
+                  │  XLSX compliance map     One sheet per framework    │
+                  │  JSON telemetry log      SIEM ingestion artifact    │
+                  │  Verification report     Hallucination audit trail  │
+                  │  Improvement log         Approved KB suggestions    │
+                  └─────────────────────────────────────────────────────┘
+                  ```
 
 ---
 
