@@ -3,19 +3,17 @@
 
 Fully local. No cloud APIs. No cost per run. Zero data leaves your machine.
 
-Built on Python · Ollama · Nmap · 14 months of original AI security research · and a lot of Monster Energy.
+Built on Python · Ollama · Nmap · 14 months of AI security research.
 
-**V1.0 complete. First live engagement: scanme.nmap.org -- 28m 50s -- 9 findings.**
+**V1.0 complete. Most recent engagement: scanme.nmap.org -- 12 findings. Typical engagement time: 15-25 minutes.**
 
 ---
 
 ## What R3D Actually Is
 
-I spent a year sitting in two rooms that rarely talk to each other.
+I spent over a year sitting in two rooms that rarely talk to each other.
 
-The red team finds vulnerabilities and hands over a 500-page automated PDF.
-The GRC team writes compliance documents in control IDs nobody on the technical side reads.
-Neither room speaks the other's language. The gap between them costs organizations time, money, and missed risk.
+The red team finds vulnerabilities and hands over a 500-page automated PDF. The GRC team writes compliance documents in control IDs nobody on the technical side reads. Neither room speaks the other's language. The gap between them costs organizations time, money, and missed risk.
 
 I built R3D to be the translator.
 
@@ -27,82 +25,129 @@ That is why R3D is a purple team agent -- not just a scanner, not just a complia
 
 ---
 
+## The AI Accountability Problem
+
+The industry is racing to replace human judgment with AI automation. When AI makes a mistake in a security context it is not abstract -- a hallucinated CVE means a real vulnerability stays open. A miscalibrated severity means a CRITICAL finding sits in a backlog for 180 days. An unverified finding in a NERC CIP compliance report means a utility files incorrect audit documentation at up to $1M per day per violation. R3D is my way of start to add accountability.
+
+**The five accountability layers:**
+
+- **Authorization gate** -- documented operator consent before any action runs. The human is legally accountable before the first packet leaves the machine.
+- **Verifier** -- Python and NVD are always the final authority. The LLM never generates CVE IDs. Hallucinated findings are caught before they reach the report.
+- **Improvement engine** -- the tool cannot modify its own KB or payload library without explicit operator approval. Y or N per suggestion. Nothing auto-modified ever.
+- **Telemetry log** -- every offensive action timestamped with MITRE ATT&CK attribution. Full audit trail for SOC correlation and compliance documentation.
+- **Engagement ID** -- ties every output file together. One run, one ID, complete traceability from authorization to final report.
+
+The AI is the execution engine. The human is the architect. That is not a philosophy statement it is a hard engineering constraint enforced at every layer of this project.
+
+---
+
+## How This Was Built
+
+R3D was built through AI-assisted systems engineering. Every module interface was defined before implementation began. Every module was security reviewed before it ran on hardware. Every decision has a documented reason behind it.
+
+Claude and Gemini acted as technical consultants -- code review, error checking, compatibility verification, syntax generation. The domain knowledge, the architecture, the security decisions, and the research are mine.
+
+Security audits completed before release: pip-audit, bandit, pylint. All findings reviewed and resolved or documented.
+
+```
+December 2024    Research begins
+14 months        Original AI security research
+                 Real client engagements
+                 Google Cybersecurity Clinic
+                 WISP audit with $100K liability cap
+                 52-page governance framework
+                 WRCCDC 9-hour SOC simulation
+
+250 hours        Coding and engineering
+                 Architecture planning
+                 Security review before every module
+
+March 19, 2026   Architecture locked
+March 21, 2026   First commit
+March 24, 2026   V1.0 complete
+April 01, 2026   V1.0 patched, audited, and released
+```
+
+The full thinking behind this is in `docs/my-approach.md`.
+
+---
+
 ## Architecture
 
 ```
-  python main.py --target example.com --mode guided
-       │
-       ▼
-  ┌─────────────────────────────────────────────────────┐
-  │  CORE LAYER                                         │
-  │  banner.py              Wizard terminal UI          │
-  │  findings.py            MITRE ATT&CK + OWASP mapping│
-  │  llm_client.py          Ollama wrapper              │
-  │  cve_engine.py          NVD CVE correlation         │
-  │  report_gen.py          PDF + XLSX + telemetry      │
-  │  verifier.py            Hallucination detection     │
-  │  improvement_engine.py  Self-improvement loop       │
-  └─────────────────────────────────────────────────────┘
-         │
-         ▼
-  ┌─────────────────────────────────────────────────────┐
-  │  MODULE PIPELINE                                    │
-  │                                                     │
-  │  1. osint_recon.py      -- PASSIVE RECON            │
-  │     WHOIS, DNS, subdomain enumeration               │
-  │     Google/DuckDuckGo dorking (auto-fallback)       │
-  │     Certificate transparency logs                   │
-  │     Email harvesting + breach checking (HIBP)       │
-  │     Sherlock username enumeration (GUIDED only)     │
-  │     Tech stack fingerprinting                       │
-  │     WAF detection (8 vendor signatures)             │
-  │     AI surface discovery (20+ endpoint signatures)  │
-  │     Rate limiter -- prevents accidental DoS         │
-  │                                                     │
-  │  2. llm_attack.py       -- LLM ATTACK SUITE         │
-  │     Only runs when AI surfaces discovered           │
-  │     Tier 1: 30 static payloads (8 categories)       │
-  │             MITRE ATLAS tagged, scored              │
-  │     Tier 2: KB-guided adaptive via Ollama RAG       │
-  │             Adapts to what Tier 1 found             │
-  │     Tier 3: Original research sequences             │
-  │             TEP-005: Contextual Trust Accumulation  │
-  │             TEP-010: Relational State Exploitation  │
-  │             Outside OWASP LLM Top 10 (2025)         │
-  │             Authorized installations only           │
-  │                                                     │
-  │  3. traditional_recon.py -- ACTIVE RECON            │
-  │     Port scan (top 1000 default / all 65535)        │
-  │     Service version detection                       │
-  │     CVE correlation (295,406 CVEs local NVD)        │
-  │     SSL/TLS audit + certificate expiry              │
-  │     Security header deep analysis (CSP quality)     │
-  │     49-path endpoint discovery                      │
-  │     JavaScript bundle secret scanning               │
-  │     WAF bypass attempt (only if WAF detected)       │
-  │                                                     │
-  │  4. grc_mapper.py       -- COMPLIANCE MAPPING       │
-  │     Org type selection (5 types)                    │
-  │     Loads only relevant frameworks -- fast          │
-  │     Risk register XLSX with due dates               │
-  │     Compliance map XLSX (one sheet per framework)   │
-  │     Executive summary via Ollama                    │
-  │     NERC CIP financial penalty context included     │
-  └─────────────────────────────────────────────────────┘
-        │
-        ▼
-  ┌─────────────────────────────────────────────────────┐
-  │  OUTPUT LAYER                                       │
-  │  PDF executive report    Board/CISO ready           │
-  │  XLSX risk register      MITRE + OWASP + frameworks │
-  │  XLSX compliance map     One sheet per framework    │
-  │  JSON telemetry log      SIEM ingestion artifact    │
-  │  Verification report     Hallucination audit trail  │
-  │  Improvement log         Approved KB suggestions    │
-  └─────────────────────────────────────────────────────┘
-  ```
+       python main.py --target example.com --mode guided
+          │
+          ▼
+      ┌─────────────────────────────────────────────────────┐
+      │  CORE LAYER                                         │
+      │  banner.py              Wizard terminal UI          │
+      │  findings.py            MITRE ATT&CK + OWASP mapping│
+      │  llm_client.py          Ollama wrapper              │
+      │  cve_engine.py          NVD CVE correlation         │
+      │  report_gen.py          PDF + XLSX + telemetry      │
+      │  verifier.py            Hallucination detection     │
+      │  improvement_engine.py  Self-improvement loop       │
+      └─────────────────────────────────────────────────────┘
+            │
+            ▼
+      ┌─────────────────────────────────────────────────────┐
+      │  MODULE PIPELINE                                    │
+      │                                                     │
+      │  1. osint_recon.py      -- PASSIVE RECON            │
+      │     WHOIS, DNS, subdomain enumeration               │
+      │     Google/DuckDuckGo dorking (auto-fallback)       │
+      │     Certificate transparency logs                   │
+      │     Email harvesting + breach checking (HIBP)       │
+      │     Sherlock username enumeration (GUIDED only)     │
+      │     Tech stack fingerprinting                       │
+      │     WAF detection (8 vendor signatures)             │
+      │     AI surface discovery (30+ endpoint signatures)  │
+      │     Rate limiter -- prevents accidental DoS         │
+      │                                                     │
+      │  2. llm_attack.py       -- LLM ATTACK SUITE         │
+      │     Only runs when AI surfaces discovered           │
+      │     Tier 1: 30 static payloads (8 categories)       │
+      │             MITRE ATLAS tagged, scored              │
+      │     Tier 2: KB-guided adaptive via Ollama RAG       │
+      │             Adapts to what Tier 1 found             │
+      │     Tier 3: Original research sequences             │
+      │             TEP-005: Contextual Trust Accumulation  │
+      │             TEP-010: Relational State Exploitation  │
+      │             Outside OWASP LLM Top 10 (2025)         │
+      │             Authorized installations only           │
+      │                                                     │
+      │  3. traditional_recon.py -- ACTIVE RECON            │
+      │     Port scan (top 1000 default / all 65535)        │
+      │     Service version detection                       │
+      │     CVE correlation (295,406 CVEs local NVD)        │
+      │     SSL/TLS audit + certificate expiry              │
+      │     Security header deep analysis (CSP quality)     │
+      │     49-path endpoint discovery                      │
+      │     JavaScript bundle secret scanning               │
+      │     WAF bypass attempt (only if WAF detected)       │
+      │                                                     │
+      │  4. grc_mapper.py       -- COMPLIANCE MAPPING       │
+      │     Org type selection (5 types)                    │
+      │     Loads only relevant frameworks -- fast          │
+      │     Risk register XLSX with due dates               │
+      │     Compliance map XLSX (one sheet per framework)   │
+      │     Executive summary via Ollama                    │
+      │     NERC CIP financial penalty context included     │
+      └─────────────────────────────────────────────────────┘
+            │
+            ▼
+      ┌─────────────────────────────────────────────────────┐
+      │  OUTPUT LAYER                                       │
+      │  PDF executive report    Board/CISO ready           │
+      │  XLSX risk register      MITRE + OWASP + frameworks │
+      │  XLSX compliance map     One sheet per framework    │
+      │  JSON telemetry log      SIEM ingestion artifact    │
+      │  Verification report     Hallucination audit trail  │
+      │  Improvement log         Approved KB suggestions    │
+      └─────────────────────────────────────────────────────┘
+```
 
-  ---
+---
 
 ## Capability Matrix
 
@@ -110,7 +155,7 @@ That is why R3D is a purple team agent -- not just a scanner, not just a complia
 |-------------------------------|------------|------------------------------------------|
 | Passive OSINT recon           | ✅ V1.0    | 10 checks, rate limited                  |
 | WAF detection                 | ✅ V1.0    | 8 vendor signatures                      |
-| AI/LLM surface discovery      | ✅ V1.0    | 20+ endpoint signatures                  |
+| AI/LLM surface discovery      | ✅ V1.0    | 30+ endpoint signatures, POST confirmed  |
 | Static payload attacks        | ✅ V1.0    | 30 payloads, 8 categories, ATLAS tagged  |
 | Adaptive KB-guided attacks    | ✅ V1.0    | Ollama RAG generation                    |
 | Original research sequences   | ✅ V1.0    | TEP-005, TEP-010 (auth installs only)    |
@@ -127,16 +172,12 @@ That is why R3D is a purple team agent -- not just a scanner, not just a complia
 | Hallucination verification    | ✅ V1.0    | NVD CVE validation + semantic dedup      |
 | Self-improvement engine       | ✅ V1.0    | Trend analysis + operator-approved KB    |
 | Engagement checkpointing      | ✅ V1.0    | --resume from any module                 |
+| Private IP scope awareness    | ✅ V1.0    | DNS/Wayback skipped on RFC1918           |
+| Duplicate finding suppression | ✅ V1.0    | Cross-module semantic dedup              |
 | Shodan integration            | 🔲 V2      | IP intel + exposure mapping              |
 | Nuclei integration            | 🔲 V2      | 9,000+ web vulnerability templates       |
 | Metasploit integration        | 🔲 V2      | GUIDED/SEMI-AUTO only, operator gated    |
 | Healthcare KB                 | 🔲 V2      | HIPAA + HITRUST mapping                  |
-| Finance KB                    | 🔲 V2      | SOC 2 + PCI-DSS v4.0 mapping            |
-| FedRAMP KB                    | 🔲 V2      | FedRAMP + FISMA + CMMC 2.0              |
-| Multi-target mode             | 🔲 V2      | --target-list file.txt                   |
-| Docker packaging              | 🔲 V2      | Enterprise on-prem appliance             |
-| SIEM push integration         | 🔲 V2      | Splunk / Elastic / Wazuh direct push     |
-| Jira / ServiceNow integration | 🔲 V2      | Auto-ticket per finding                  |
 
 ---
 
@@ -153,8 +194,6 @@ R3D loads only what applies to your organization. Unused frameworks are never lo
 | All                      | All frameworks                                       |
 
 **NIST AI RMF loads automatically on any org type when AI surfaces are discovered.**
-
-For critical infrastructure targets, R3D includes NERC CIP financial penalty context (up to $1M/day per violation) in the executive report -- because boards understand dollar figures, not control IDs.
 
 ---
 
@@ -222,43 +261,13 @@ Utilities:
 
 ---
 
-## First Live Engagement
-
-```
-====================================================
-  R3D ENGAGEMENT COMPLETE
-  ID     : R3D_20260324_015715_scanme_nmap_org
-  Target : scanme.nmap.org
-  Mode   : GUIDED
-  Time   : 28m 50s
-====================================================
-
-Findings Summary
-┏━━━━━━━━━━━┳━━━━━━━┓
-┃ Severity  ┃ Count ┃
-┡━━━━━━━━━━━╇━━━━━━━┩
-│ MEDIUM    │     1 │
-│ LOW       │     8 │
-│ TOTAL     │     9 │
-└───────────┴───────┘
-
-Output files:
-  → PDF executive report
-  → XLSX risk register (MITRE + OWASP + all 5 frameworks)
-  → XLSX compliance map (one sheet per framework)
-  → JSON telemetry log (SIEM-ready)
-  → Verification report (hallucination audit)
-```
-
----
-
 ## The Research Foundation
 
 ### Why the LLM Attack Module Is Different
 
 Most LLM security research focuses on single-turn attacks -- what you say to a model in one message. The OWASP LLM Top 10, MITRE ATLAS, and most academic work operates in this space.
 
-R3D's Tier 3 attack sequences are built on 14 months of original AI security research into a class of LLM vulnerability that operates on conversation trajectory rather than individual messages. These vectors sit outside the current OWASP LLM Top 10 (2025) and have no formal CVE classification.
+R3D's Tier 3 attack sequences are built on 14 months of original AI security research into a class of LLM vulnerability that operates on conversation trajectory rather than individual messages. These vectors sit outside the current OWASP LLM Top 10 (2025) and have no formal CVE classification. Not available publicly yet.
 
 No single turn looks malicious in isolation. The attack emerges from the sequence as a whole. Single-turn content filters do not detect it.
 
@@ -272,87 +281,9 @@ Unknown findings are flagged, never fabricated. R3D's tiered CVE lookup implemen
 
 ## Why Fully Local Matters
 
-Every API call is a dollar. Every sensitive engagement is dozens of calls.
+Every API call costs money. Every sensitive engagement is dozens of calls.
 
-For critical infrastructure assessments -- testing systems adjacent to power grid operations -- you cannot send data to a cloud API. The tool has to be local by design, not by configuration.
-
-R3D runs entirely on your hardware. RTX 5070 Ti runs llama3:8b fast enough for production use. Zero API cost. Zero data leaving the machine. Fully air-gappable for sensitive engagements.
-
----
-
-## How This Was Built
-
-This is not vibe coding.
-
-Vibe coding means accepting AI output without understanding it,
-relying on trial and error, having no architectural intent.
-That is the opposite of what happened here.
-
-R3D was built through AI-assisted systems engineering.
-Every module interface was defined before implementation began.
-Every module was security reviewed before it ran on hardware.
-Every decision has a documented reason behind it.
-
-Claude and Gemini acted as technical consultants -- code review,
-error checking, compatibility verification, syntax generation.
-The domain knowledge, the architecture, the security decisions,
-and the research are mine.
-
-```
-December 2024    Research begins
-14 months        Original AI security research
-                 Real client engagements
-                 Google Cybersecurity Clinic
-                 WISP audit with $100K liability cap
-                 52-page governance framework
-                 WRCCDC 9-hour SOC simulation
-
-150 hours        Coding and engineering
-                 Architecture planning
-                 Security review before every module
-
-March 19, 2026   Architecture locked
-March 21, 2026   First commit
-March 24, 2026   V1.0 complete -- 23 commits
-                 Two weeks ahead of original estimate
-```
-
-The 4-day sprint was fast because of the 14 months before it.
-
-The full thinking behind this is in `docs/my-approach.md`.
-
----
-
-## V2 Roadmap
-
-**Phase 1 (Month 1-2)**
-```
-Shodan API              IP intelligence + exposure mapping
-Nuclei                  9,000+ web vulnerability templates
-Metasploit              Exploitation -- GUIDED/SEMI-AUTO gated
-Bing API                Dual search engine (DDG + Bing)
-TEP-011/012/013         New original research vectors
-```
-
-**Phase 2 (Month 3-4)**
-```
-Healthcare KB           HIPAA + HITRUST compliance mapping
-Finance KB              SOC 2 + PCI-DSS v4.0 mapping
-FedRAMP KB              FedRAMP + FISMA + CMMC 2.0
-Multi-target mode       --target-list file.txt batch scanning
-Docker packaging        Enterprise on-prem appliance
-SIEM push               Splunk / Elastic / Wazuh direct integration
-Jira / ServiceNow       Auto-ticket creation per finding
-Prompt Intelligence     Learns operator patterns over time
-```
-
-**Phase 3 (Month 5-6)**
-```
-MSP mode                Multi-client profile management
-Web dashboard           Self-hosted Flask UI
-Enterprise license      On-prem appliance model
-Self-improvement agent  Autonomous KB and payload updates
-```
+For critical infrastructure assessments testing systems adjacent to power grid operations  you cannot send data to a cloud API. The tool has to be local by design, not by configuration.
 
 ---
 
@@ -387,7 +318,8 @@ r3d-agent/
 ├── docs/
 │   ├── user-guide.md            Complete operations manual
 │   ├── build-log.md             Engineering journal
-│   └── my-approach.md          Philosophy and design decisions
+│   ├── my-approach.md           Philosophy and design decisions
+│   └── how-it-works.md          Full technical breakdown A to Z
 └── output/                      Generated per engagement
     ├── reports/
     ├── engagements/
@@ -402,11 +334,11 @@ r3d-agent/
 
 ```
 Language:          Python 3.12
-Commits:           30+
-Research:          14 months (December 2024 -- March 2026)
-Coding:            150 hours
-Build sprint:      4 days
-First engagement:  scanme.nmap.org -- 28m 50s -- 9 findings
+Commits:           50+
+Research:          14 months (December 2024 -- April 2026)
+Coding:            250 hours
+Build sprint:      14 days
+Audits:            pip-audit, bandit, pylint -- all resolved
 Hardware:          NVIDIA RTX 5070 Ti, 32GB DDR5, Windows 11
 LLM:               llama3:8b via Ollama (fully local)
 CVE database:      295,406 CVEs (local NVD)
@@ -431,7 +363,7 @@ Unauthorized use violates the Computer Fraud and Abuse Act (CFAA) in the United 
 ## Author
 
 **HumdoesCyber**
-University of Arizona -- Information Science, Senior · Graduating May 2026
+University of Arizona -- Information Science
 
 14 months of original AI security research. Real client engagements. Real compliance work.
 Google Cybersecurity Clinic · WRCCDC · Independent consulting.
@@ -442,5 +374,5 @@ Built to close the gap between technical security and GRC.
 
 ## License
 
-Private repository. All rights reserved.
+Private repository. All rights reserved. The owner does not take any liability on how the tool is used.
 Contact via GitHub for collaboration or licensing inquiries.
