@@ -71,7 +71,6 @@ April 01, 2026   V1.0 patched, audited, and released
 The full thinking behind this is in `docs/my-approach.md`.
 
 ---
-
 ## Architecture
 
 ```
@@ -145,7 +144,7 @@ The full thinking behind this is in `docs/my-approach.md`.
                   │  Verification report     Hallucination audit trail  │
                   │  Improvement log         Approved KB suggestions    │
                   └─────────────────────────────────────────────────────┘
-                  ```
+  ```
 
 ---
 
