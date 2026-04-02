@@ -49,7 +49,6 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib import response
 
 from rich.console import Console
 
@@ -113,18 +112,16 @@ def _validate_mode(mode: str) -> str:
     Validate operating mode.
     Returns uppercase mode or exits with clear error.
     """
-    mode_upper = mode.upper().replace("-", "-")
+    mode_upper = mode.upper().replace("-", "").replace("_", "")
+
 
     # Handle common typos
     mode_map = {
-        "GUIDED":     "GUIDED",
-        "SEMIAUTO":   "SEMI-AUTO",
-        "SEMI_AUTO":  "SEMI-AUTO",
-        "SEMI-AUTO":  "SEMI-AUTO",
-        "FULLAUTO":   "FULL-AUTO",
-        "FULL_AUTO":  "FULL-AUTO",
-        "FULL-AUTO":  "FULL-AUTO",
+        "GUIDED":    "GUIDED",
+        "SEMIAUTO":  "SEMI-AUTO",
+        "FULLAUTO":  "FULL-AUTO",
     }
+
 
     if mode_upper in mode_map:
         return mode_map[mode_upper]

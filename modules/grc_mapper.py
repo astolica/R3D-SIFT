@@ -794,6 +794,20 @@ Under 300 words. Written for a CEO not an engineer.
                 f"Raw evidence preserved."
             )
 
+        nerc_note = ""
+        if "nerc_cip" in frameworks and aggregated.critical_count > 0:
+            nerc_note = (
+                f"\n\nNERC CIP COMPLIANCE NOTE: This assessment "
+                f"identified {aggregated.critical_count} critical "
+                f"finding(s) with direct NERC CIP control mappings. "
+                f"NERC CIP violations carry financial penalties of up "
+                f"to $1,000,000 per violation per day. Immediate "
+                f"remediation is required to maintain compliance and "
+                f"avoid regulatory exposure. All NERC CIP control "
+                f"gaps are documented in the accompanying compliance "
+                f"map with applicable standard references."
+            )
+
         return (
             f"R3D conducted an autonomous security assessment "
             f"of {self.target}. Overall risk posture: "
@@ -810,7 +824,9 @@ Under 300 words. Written for a CEO not an engineer.
             f"24 hours, high within 30 days, medium within "
             f"90 days. Full remediation guidance in the "
             f"accompanying risk register."
+            f"{nerc_note}"
         )
+
 
     # ------------------------------------------------------------------ #
     # MAIN RUN
