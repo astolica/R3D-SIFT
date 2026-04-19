@@ -772,6 +772,16 @@ def main():
         )
         auto_attack = True
 
+    # FULL-AUTO defaults to all frameworks unless overridden
+    # -- no point running a full auto engagement and only getting
+    # one framework's worth of compliance coverage
+    if mode == "FULL-AUTO" and not args.org_type:
+        args.org_type = "all"
+        console.print(
+            "[dim]  FULL-AUTO org-type: all frameworks "
+            "(override with --org-type)[/dim]"
+        )
+
     # Validate org-type if provided
     if args.org_type and args.org_type not in VALID_ORG_TYPES:
         console.print(
