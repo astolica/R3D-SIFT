@@ -1,37 +1,33 @@
 """
 R3D Agent -- Verifier Module
-Quality gate between raw LLM output and final reports.
-Catches hallucinated findings before they reach the PDF.
+The quality gate that sits between raw LLM output and the final reports.
+If the LLM hallucinated a CVE ID, inflated a severity, or produced two
+near-identical findings, this catches it before it reaches the PDF.
 
-What it checks (LLM attack findings only):
-    1. CVE ID validation    -- confirms CVE exists via NVD API
-    2. Severity sanity      -- low score findings removed/flagged
-    3. Evidence check       -- confirms conversation log exists
-    4. Semantic dedup       -- removes near-duplicate findings
+Only reviews LLM attack findings — OSINT, traditional recon, and GRC
+output is deterministic (Python-authoritative) and passes straight through.
+That's why you'll see "11/11 passed — deterministic findings" on a run
+with no AI surfaces. That's correct behavior, not a broken gate.
 
-What it does NOT touch:
-    OSINT findings          -- Python-authoritative, no LLM
-    Traditional recon       -- nmap/SSL/headers are factual
-    GRC findings            -- lookup table output, no LLM
+What gets checked (LLM findings only):
+    1. CVE ID validation   -- direct NVD API lookup by ID, confirms it exists
+    2. Severity sanity     -- anything below 3.0 gets cut, 3-5 gets flagged
+    3. Evidence check      -- confirms the conversation log file was saved
+    4. Semantic dedup      -- difflib similarity check, 0.85 threshold
 
 Key design decisions:
-    Fail open on CVE        -- never strip CVE without confirmation
-    _copy_finding() helper  -- handles pydantic v1 and v2
-    Rebuild aggregator      -- clean severity recount after verify
-    Ollama optional         -- difflib fallback for semantic dedup
-    Unverified bucket       -- removed findings saved to telemetry
-
-Fixes applied:
-    Fix 1: CVE validation uses direct NVD API call by ID
-    Fix 2: model_dump/dict/__dict__ three-way fallback
-    Fix 3: _copy_finding() helper handles pydantic v1 + v2
-    Fix 4: Uses aggregated.target not findings[0].target
+    Fail open on CVE       -- if NVD is unreachable, finding survives
+    Unverified bucket      -- removed findings go to telemetry, not deleted
+    difflib for dedup      -- no Ollama dependency on the verifier path
+    _copy_finding()        -- immutable copy before modifying, handles
+                             both Pydantic v1 (.dict()) and v2 (.model_dump())
+    aggregated.target      -- used over findings[0].target to handle
+                             edge case where findings list is empty
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
 
 import json
-import re
 import requests
 from difflib import SequenceMatcher
 from datetime import datetime
@@ -383,11 +379,15 @@ class Verifier:
         )
 
         verified_findings: list[Finding] = []
+        deterministic_count = 0
 
         for finding in aggregated.findings:
-            # Non-LLM pass through unchanged
+            # Non-LLM findings pass through unchanged — deterministic
+            # sources (port scan, NVD, OSINT) don't need hallucination
+            # checks. Track count for transparent summary output.
             if finding.source_module != "llm_attack":
                 verified_findings.append(finding)
+                deterministic_count += 1
                 continue
 
             self.stats["total_reviewed"] += 1
@@ -454,7 +454,8 @@ class Verifier:
         )
         self._print_summary(
             aggregated.total_findings,
-            new_aggregated.total_findings
+            new_aggregated.total_findings,
+            deterministic_count
         )
 
         return new_aggregated
@@ -492,15 +493,31 @@ class Verifier:
                 f"[yellow]  Verification report failed: {e}[/yellow]"
             )
 
-    def _print_summary(self, total_before: int, total_after: int):
+    def _print_summary(
+        self,
+        total_before: int,
+        total_after: int,
+        deterministic_count: int = 0
+    ):
         """Print clean verification summary."""
-        console.print(f"\n[green]  Verifier complete[/green]")
-        console.print(f"[dim]    Reviewed:   {self.stats['total_reviewed']} LLM findings[/dim]")
-        console.print(f"[dim]    Passed:     {self.stats['passed']}[/dim]")
-        console.print(f"[dim]    Flagged:    {self.stats['flagged_uncertain']}[/dim]")
-        console.print(f"[dim]    Removed:    {self.stats['removed']}[/dim]")
-        console.print(f"[dim]    Duplicates: {self.stats['duplicates_removed']}[/dim]")
-        console.print(f"[dim]    CVE stripped: {self.stats['cve_stripped']}[/dim]")
+        console.print("\n[green]  Verifier complete[/green]")
+        if deterministic_count > 0:
+            console.print(
+                f"[dim]    Deterministic findings (port scan / OSINT / NVD): "
+                f"{deterministic_count} — passed through, no LLM review needed[/dim]"
+            )
+        if self.stats['total_reviewed'] == 0:
+            console.print(
+                "[dim]    LLM findings reviewed: 0 "
+                "(no AI surfaces found this engagement)[/dim]"
+            )
+        else:
+            console.print(f"[dim]    LLM findings reviewed: {self.stats['total_reviewed']}[/dim]")
+            console.print(f"[dim]    Passed:     {self.stats['passed']}[/dim]")
+            console.print(f"[dim]    Flagged:    {self.stats['flagged_uncertain']}[/dim]")
+            console.print(f"[dim]    Removed:    {self.stats['removed']}[/dim]")
+            console.print(f"[dim]    Duplicates: {self.stats['duplicates_removed']}[/dim]")
+            console.print(f"[dim]    CVE stripped: {self.stats['cve_stripped']}[/dim]")
         console.print(f"[dim]    Total: {total_before} -> {total_after} findings[/dim]")
 
 
@@ -516,8 +533,6 @@ if __name__ == "__main__":
         "[yellow]NOTE: CVE validation makes live NVD API calls. "
         "Requires internet.[/yellow]\n"
     )
-
-    from core.findings import FindingsAggregator, Finding
 
     aggregator = FindingsAggregator(target="example.com")
 

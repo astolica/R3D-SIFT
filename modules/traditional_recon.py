@@ -1,39 +1,43 @@
 """
 R3D Agent -- Traditional Recon Module
-Active reconnaissance against discovered attack surface.
-Runs after osint_recon.py -- reads OSINTProfile for context.
+Active recon against whatever surface OSINT mapped out.
+This is where we go from passive observation to actually poking the target.
+Runs after osint_recon.py — reads the OSINTProfile for IP, WAF status,
+and tech stack so we're not scanning blind.
 
 Checks performed:
     1-3. Port scan + service detection + CVE correlation
-         (combined -- one nmap run for efficiency)
+         (one nmap run — combining these saves 2-3 minutes)
     4.   SSL/TLS audit
     5.   Security headers deep check
-    6.   Endpoint discovery
-    7.   JS bundle analysis
-    8.   WAF bypass attempt (only if WAF detected by OSINT)
+    6.   Endpoint discovery (49 common paths)
+    7.   JS bundle analysis (secrets, API keys, leaked endpoints)
+    8.   WAF bypass (only if OSINT flagged a WAF — skip otherwise)
 
 Integration:
-    Reads  -- OSINTProfile via getattr (defensive, safe)
-    Uses   -- core/cve_engine.py for CVE correlation
-    Writes -- list[Finding] to orchestrator
+    Reads  -- OSINTProfile via getattr() so missing fields
+              don't crash the module, they just degrade gracefully
+    Uses   -- core/cve_engine.py SQLite DB for CVE correlation
+    Writes -- list[Finding] back to orchestrator
 
 Performance:
-    Standard (top 1000 ports): 3-5 minutes
-    Full scan (all 65535):     15-25 minutes
-    Target: contribute to 15-20 min full engagement
+    Standard scan (top 1000 ports) : 3-5 minutes
+    Full scan (all 65535 ports)    : 15-25 minutes
+    Total target for this module   : under 10 min on standard
 
 Error handling:
-    Each check independent -- one failure never stops others
-    All loops bounded -- no infinite loop risk
-    NMAP_TIMEOUT=300 hard caps nmap execution
-    try/except per CVE lookup, per JS file, per endpoint
-    nmap ImportError caught with clear install message
+    Every check is independent — SSL failing doesn't stop headers check
+    NMAP_TIMEOUT=300 is a hard 5-minute cap per nmap subprocess.
+    5 minutes is enough for top-1000 even on slow targets. Full scan
+    gets the same cap — it just means we may not finish all ports,
+    which is fine for an engagement tool vs a dedicated scanner.
+    try/except around every CVE lookup, JS file, and endpoint probe
 
 Security:
-    All nmap inputs sanitized via _sanitize_ip
-    urllib3 warnings suppressed for verify=False calls
-    No shell=True anywhere -- injection safe
-    Mode gates enforced throughout
+    nmap inputs sanitized via _sanitize_ip before subprocess call
+    No shell=True anywhere — not giving that attack surface
+    urllib3 warnings suppressed for verify=False WAF bypass calls
+    Mode gates checked before any active check runs
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
@@ -64,31 +68,42 @@ BASE_DIR   = Path(__file__).parent.parent
 OUTPUT_DIR = BASE_DIR / "output"
 
 # Scan configuration
-REQUEST_TIMEOUT = 10
-REQUEST_DELAY   = 0.5
-TOP_PORTS       = "1000"     # default -- 3-5 min
-ALL_PORTS       = "1-65535"  # full scan -- 15-25 min
-NMAP_TIMEOUT    = 300        # 5 min hard cap per nmap run
+REQUEST_TIMEOUT = 10      # per-request HTTP timeout (seconds)
+REQUEST_DELAY   = 0.5     # delay between endpoint probes — avoids triggering rate limits
+TOP_PORTS       = "1000"  # default scan — covers 99%+ of real services, 3-5 min
+ALL_PORTS       = "1-65535"  # full scan via --full-scan flag — 15-25 min
+NMAP_TIMEOUT    = 300     # 5 min hard cap per nmap subprocess — enough for top-1000
+                          # on slow external targets. Increase via --timeout if needed.
 
-# Common endpoint paths for discovery
+# Common endpoint paths to probe during discovery.
+# Grouped by category — auth panels, API docs, CMS, sensitive files,
+# server metadata, Spring Boot actuators, and generic health endpoints.
+# 200/301/302 on any of these is worth flagging.
 COMMON_ENDPOINTS = [
+    # Auth / admin panels
     "/admin", "/administrator", "/admin/login",
     "/login", "/signin", "/auth",
     "/dashboard", "/panel", "/console",
+    # API and documentation
     "/api", "/api/v1", "/api/v2", "/api/v3",
     "/swagger", "/swagger-ui", "/swagger.json",
     "/openapi.json", "/api-docs",
     "/graphql", "/graphiql",
+    # CMS defaults (WordPress, phpMyAdmin)
     "/wp-admin", "/wp-login.php",
     "/phpmyadmin", "/pma",
+    # Sensitive files that should never be web-accessible
     "/.env", "/.git", "/.git/config",
     "/config", "/config.php", "/config.json",
     "/backup", "/backup.zip", "/backup.sql",
     "/robots.txt", "/sitemap.xml",
     "/.htaccess", "/web.config",
+    # Server status pages
     "/server-status", "/server-info",
+    # Spring Boot actuators — common in Java stacks, often left open
     "/actuator", "/actuator/health",
     "/actuator/env", "/actuator/mappings",
+    # Generic health / debug endpoints
     "/metrics", "/health", "/status",
     "/debug", "/trace", "/info",
 ]
@@ -223,9 +238,9 @@ class TraditionalRecon:
         if self.mode != "GUIDED":
             return True
         console.print(
-            f"\n[bold yellow]"
-            f"GUIDED -- Approval Required"
-            f"[/bold yellow]"
+            "\n[bold yellow]"
+            "GUIDED -- Approval Required"
+            "[/bold yellow]"
         )
         console.print(f"Check:  [bold]{check_name}[/bold]")
         console.print(f"Action: {description}")
@@ -633,8 +648,8 @@ class TraditionalRecon:
                 findings.append(Finding(
                     title="CSP header missing",
                     description=(
-                        f"No Content-Security-Policy. "
-                        f"XSS unrestricted."
+                        "No Content-Security-Policy. "
+                        "XSS unrestricted."
                     ),
                     finding_type="header_missing",
                     source_module="traditional_recon",
@@ -664,8 +679,8 @@ class TraditionalRecon:
                 findings.append(Finding(
                     title="HSTS missing",
                     description=(
-                        f"No Strict-Transport-Security. "
-                        f"HTTP downgrade possible."
+                        "No Strict-Transport-Security. "
+                        "HTTP downgrade possible."
                     ),
                     finding_type="header_missing",
                     source_module="traditional_recon",

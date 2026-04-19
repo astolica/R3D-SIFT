@@ -1,14 +1,61 @@
+# R3D Agent — .gitignore
+
+# Engagement outputs — never commit
 output/
+
+# CVE database — too large, user builds locally via --setup-cve-db
+# Run: python main.py --setup-cve-db [--nvd-api-key <key>]
+data/cve_database.db
+data/cve_database.json
+data/cve_cache.json
+
+# Original research — never distributed
+data/llm_attack_kb/original_research.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Environment / secrets / future API keys
+.env
+.env.*
+*.key
+config.local.json
+config.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+debug_*.txt
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Report outputs (also covered by output/ above — belt and suspenders)
 *.pdf
 *.xlsx
-__pycache__/
-*.pyc
-.env
-config.yaml
-*.log
-
-venv/
-*.egg-info/
-.pytest_cache/
-data/llm_attack_kb/original_research.md
-data/cve_database.json

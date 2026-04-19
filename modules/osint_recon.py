@@ -15,10 +15,10 @@ Checks performed:
     9.  Breach checking (HaveIBeenPwned per-email, GitHub secrets)
     10. Sherlock username enumeration (subprocess, GUIDED/SEMI-AUTO only)
 
-Removed from v1:
-    - Shodan (requires paid API key -- v2)
-    - DeHashed (requires paid subscription -- v2)
-    - IntelX (requires API key -- v2)
+Reserved for v2 (not in v1):
+    - Shodan   (paid API — adds too much cost for early users)
+    - DeHashed (paid subscription — same reasoning)
+    - IntelX   (API key required — v2 when we have paying customers)
 
 Rate Limiting:
     RateLimiter class enforces per-domain and global request limits.
@@ -302,15 +302,16 @@ class RateLimiter:
         self,
         domain: str,
         delay: Optional[float] = None,
-        label: str = ""
+        _label: str = ""
     ):
         """
         Wait appropriate time before next request to domain.
 
         Args:
             domain: Target domain for per-domain tracking
-            delay: Override default delay (uses REQUEST_DELAY if None)
-            label: Human-readable label for rate limit messages
+            delay:  Override default delay (uses REQUEST_DELAY if None)
+            _label: Human-readable label for rate limit messages (reserved,
+                    not currently used — kept for future logging hooks)
         """
         if self.fast_mode:
             time.sleep(0.1)
@@ -551,9 +552,9 @@ class OSINTRecon:
         if self.mode != "GUIDED":
             return True
         console.print(
-            f"\n[bold yellow]"
-            f"GUIDED -- Approval Required"
-            f"[/bold yellow]"
+            "\n[bold yellow]"
+            "GUIDED -- Approval Required"
+            "[/bold yellow]"
         )
         console.print(f"Check:  [bold]{check_name}[/bold]")
         console.print(f"Action: {description}")
@@ -569,9 +570,9 @@ class OSINTRecon:
         Requires full YES -- not just Y.
         """
         console.print(
-            f"\n[bold red]"
-            f"CONSENT REQUIRED -- ACTIVE ENUMERATION"
-            f"[/bold red]"
+            "\n[bold red]"
+            "CONSENT REQUIRED -- ACTIVE ENUMERATION"
+            "[/bold red]"
         )
         console.print(f"Tool:   [bold]{tool}[/bold]")
         console.print(f"Action: {description}")
@@ -1974,7 +1975,8 @@ class OSINTRecon:
                     ],
                     capture_output=True,
                     text=True,
-                    timeout=60
+                    timeout=60,
+                    check=False  # non-zero exit is normal when no platforms found
                 )
 
                 output          = result.stdout + result.stderr

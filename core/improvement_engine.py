@@ -358,12 +358,6 @@ class ImprovementEngine:
         if not existing:
             return False
 
-        ratio = SequenceMatcher(
-            None,
-            suggested_text.lower()[:200],
-            existing.lower()
-        ).ratio()
-
         # Check if any 200-char window in existing is similar
         chunk_size = 200
         for i in range(0, len(existing), chunk_size // 2):
@@ -454,8 +448,8 @@ class ImprovementEngine:
                     pid: count for pid, count in retire_list
                 },
                 "action": (
-                    f"Retire these payload IDs from "
-                    f"data/payloads/static_injections.json:\n"
+                    "Retire these payload IDs from "
+                    "data/payloads/static_injections.json:\n"
                     + "\n".join(
                         f"  {pid}: blocked {c}/{n_engagements} times"
                         for pid, c in retire_list

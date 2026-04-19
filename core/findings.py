@@ -1,21 +1,25 @@
 """
 R3D Agent — Findings Aggregator
-Collects findings from all four modules, deduplicates,
-scores severity, maps to MITRE ATT&CK and OWASP,
-prioritizes zero day flags, and produces a clean
-structured list for the report generator.
+Central hub that all four modules feed into.
+Takes raw findings, deduplicates them, scores severity,
+maps every finding to MITRE ATT&CK and OWASP, then hands
+a clean structured list to the report generator.
+
+This is what makes R3D output actually useful — findings don't
+just say "bad thing found", they say which ATT&CK technique it
+maps to and which compliance control it violates.
 
 Frameworks mapped:
-- MITRE ATT&CK (attack techniques)
-- OWASP Top 10 Web (web vulnerabilities)
-- OWASP LLM Top 10 (AI/LLM vulnerabilities)
+    MITRE ATT&CK       -- attack technique + tactic ID
+    OWASP Top 10 Web   -- web vulnerability category
+    OWASP LLM Top 10   -- AI/LLM vulnerability category
 
-Security fixes applied:
-- Deterministic ID generation via hashlib.md5
-- Pydantic field validators on title/description/finding_type
-- Error handling on file save operations
-- Corrected MITRE mapping for prompt injection
-- TODO marker for GRC context scoring in v2
+Design decisions:
+    Deterministic IDs via hashlib.md5 — same finding on same target
+    always gets the same ID, so dedup works across runs.
+    Pydantic validators on title/description/finding_type — bad
+    input from LLM modules gets caught here, not in the PDF.
+    Field length caps — prevents bloated reports from runaway LLM output.
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux, macOS
 """
@@ -87,8 +91,18 @@ OWASP_MAPPING = {
     "default":                  ("A05", "Security Misconfiguration"),
 }
 
-# Severity base scores by finding type (1-10)
-# Adjusted by CVE CVSS score and zero day flag during scoring
+# Severity base scores by finding type (1-10).
+# These are starting points — final score gets adjusted by CVE CVSS
+# score (if a CVE was matched) and boosted if zero_day_flag is set.
+#
+# Scoring rationale:
+#   trust_escalation / data_exfiltration → 9  (direct account/data impact)
+#   prompt_injection / crescendo_attack  → 8  (active attack vectors)
+#   zero_day                             → 9  (unknown, no patch available)
+#   jailbreak / context_manipulation     → 7  (requires specific conditions)
+#   cve_match / credential_stuffing      → 7  (known severity, patchable)
+#   exposed_admin / outdated_ssl         → 6-8 (depends on exposure)
+#   header_missing / subdomain           → 3-4 (low direct impact)
 BASE_SEVERITY = {
     "prompt_injection":     8,
     "jailbreak":            7,
@@ -114,9 +128,11 @@ BASE_SEVERITY = {
 
 class Finding(BaseModel):
     """
-    Single finding from any module.
-    All four modules produce findings in this exact shape.
-    Pydantic enforces field types and length limits.
+    The standard finding object every module produces.
+    OSINT, LLM attack, traditional recon, and GRC all return
+    lists of these — orchestrator aggregates them into one place.
+    Pydantic enforces types and length limits so garbage LLM output
+    gets caught here before it reaches the report generator.
     """
     # Core fields
     id: Optional[str] = None

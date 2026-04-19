@@ -1,58 +1,54 @@
 """
 R3D Agent -- LLM Attack Suite
-Crown jewel module. Targets AI surfaces discovered by OSINT module.
-Runs after osint_recon.py completes and OSINTProfile is loaded.
+The crown jewel. Only runs when OSINT finds an AI surface.
+Everything else in R3D is standard recon tooling — this is what
+makes R3D different from Nessus or Burp.
 
 Three-tier attack architecture:
     Tier 1 -- Static payload library (fast, deterministic baseline)
-               Loads from data/payloads/static_injections.json
-               30 payloads across 8 categories
-               Runs first -- catches poorly configured targets immediately
+               30 payloads across 8 categories from static_injections.json
+               Runs first on every surface — catches misconfigured targets fast
+               No Ollama needed for this tier
 
-    Tier 2 -- KB-guided adaptive payloads (RAG-powered)
-               Ollama reads KB files and generates novel payloads
-               Adapts to target's specific responses and guardrail behavior
-               Runs after Tier 1 regardless of results
-               Different categories may succeed where others failed
+    Tier 2 -- KB-guided adaptive payloads (RAG-powered via Ollama)
+               Reads MITRE ATT&CK, OWASP LLM Top 10, and MITRE ATLAS KBs
+               Generates novel payloads adapted to how this specific target
+               responded to Tier 1 — what got through, what got blocked
+               Runs after Tier 1 regardless of Tier 1 results
 
-    Tier 3 -- Original research sequences (multi-turn social engineering)
+    Tier 3 -- Original research (multi-turn sequences)
                TEP-005: Contextual Trust Accumulation (8-turn protocol)
                TEP-010: Relational State Exploitation (commitment traps)
-               Only available if original_research.md exists locally
-               Contains original research by HumdoesCyber
-               Available to authorized researchers only
-               Runs against hardened targets that blocked Tier 1 and 2
+               Original research by HumdoesCyber — lives in original_research.md
+               Only triggers when Tier 1 + 2 found fewer than 2 HIGH findings,
+               meaning the target is hardened and needs deeper probing
 
 Attack flow per surface:
-    1. Confirm surface is actually an LLM
-    2. Show surface info -- operator confirms before attacking
-    3. Establish baseline behavior
+    1. Confirm surface is actually an LLM (not just a search box)
+    2. Operator confirmation before attacking (SEMI-AUTO / GUIDED)
+    3. Establish baseline — what the model's default behavior looks like
     4. Run Tier 1 static payloads
     5. Run Tier 2 KB-guided adaptive payloads
-    6. Run Tier 3 research sequences if available and needed
-    7. Save conversation log for verifier module
-    8. Return Finding objects
+    6. Escalate to Tier 3 if target looks hardened (< 2 HIGH findings)
+    7. Save full conversation log for verifier module
+    8. Return Finding objects to orchestrator
 
 Operating modes:
-    GUIDED       -- approve each attack vector before firing
-    SEMI-AUTO    -- show surface findings, confirm before attacking
-                   (default safe behavior)
-    FULL-AUTO    -- requires --auto-attack flag to attack immediately
-                   without that flag still confirms per surface
+    GUIDED     -- approve each individual attack vector before firing
+    SEMI-AUTO  -- confirm per surface, then runs all tiers automatically
+    FULL-AUTO  -- requires --auto-attack flag explicitly, otherwise
+                 still confirms per surface (safety default)
 
 Error handling:
-    Every loop is bounded -- no infinite loop risk
-    Every method that can fail has try/except
-    Every file operation has graceful fallback
-    Errors logged and skipped -- module never crashes mid-run
+    Every loop is bounded — no runaway attack sequences
+    Every method that can fail wraps in try/except, logs, and continues
+    Module never crashes mid-run — one bad surface doesn't stop the rest
 
 Security:
     All target URLs validated before use
-    ConversationManager creation wrapped in try/except
-    Request timeouts enforced on all LLM interactions
-    Conversation logs preserved for verifier module
-    Named delay constants between all requests
-    Mode gates enforced throughout
+    Request timeouts on every LLM interaction
+    Conversation logs preserved for verifier review
+    Mode gates enforced — GUIDED never auto-fires
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
@@ -67,7 +63,7 @@ from typing import Optional
 from rich.console import Console
 from rich.panel import Panel
 
-from core.findings import Finding, FindingsAggregator
+from core.findings import Finding
 from core.llm_client import query_llm, LLMResponse
 
 console = Console()
@@ -477,15 +473,17 @@ class ResponseAnalyzer:
 
     def _ollama_analysis(
         self,
-        payload:  dict,
-        response: str,
-        history:  list[dict]
+        payload:   dict,
+        response:  str,
+        _history:  list[dict]
     ) -> tuple[int, str]:
         """
         Ollama semantic analysis for ambiguous responses.
         Only called when pattern matching is inconclusive.
         Conservative -- only high confidence on clear evidence.
         Never raises -- returns 0,'' on any failure.
+        (_history kept in signature for API consistency — callers pass it,
+        but the analysis prompt uses payload/response only.)
         """
         try:
             analysis_prompt = f"""
@@ -567,7 +565,6 @@ class LLMAttackSuite:
         self.target      = target
         self.mode        = mode.upper()
         self.auto_attack = auto_attack
-        self.aggregator  = FindingsAggregator(target=target)
         self.findings:   list[Finding] = []
 
         # Load static payloads
@@ -596,9 +593,8 @@ class LLMAttackSuite:
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
     def _add_finding(self, finding: Finding):
-        """Add finding to local list and aggregator."""
+        """Add finding to local list. Orchestrator handles aggregation."""
         self.findings.append(finding)
-        self.aggregator.add_finding(finding)
 
     def _guided_gate(
         self, check_name: str, description: str
@@ -607,9 +603,9 @@ class LLMAttackSuite:
         if self.mode != "GUIDED":
             return True
         console.print(
-            f"\n[bold yellow]"
-            f"GUIDED -- Approval Required"
-            f"[/bold yellow]"
+            "\n[bold yellow]"
+            "GUIDED -- Approval Required"
+            "[/bold yellow]"
         )
         console.print(f"Check:  [bold]{check_name}[/bold]")
         console.print(f"Action: {description}")
@@ -906,6 +902,10 @@ class LLMAttackSuite:
         owasp_kb = _load_kb_file(KB_OWASP)
         if owasp_kb:
             kb_contexts["data_exfiltration"] = owasp_kb
+
+        atlas_kb = _load_kb_file(KB_ATLAS)
+        if atlas_kb:
+            kb_contexts["adversarial_ml"] = atlas_kb
 
         if not kb_contexts:
             console.print(
@@ -1258,9 +1258,9 @@ Respond in JSON only:
 
     def _run_tep010(
         self,
-        conv:        ConversationManager,
-        analyzer:    ResponseAnalyzer,
-        research_kb: str
+        conv:         ConversationManager,
+        analyzer:     ResponseAnalyzer,
+        _research_kb: str
     ) -> list[Finding]:
         """
         TEP-010: Relational State Exploitation
@@ -1401,7 +1401,7 @@ Respond in JSON only:
     def _analyze_cta_sequence(
         self,
         turn_results: list[dict],
-        analyzer:     ResponseAnalyzer
+        _analyzer:    ResponseAnalyzer
     ) -> tuple[int, str]:
         """
         Analyze full CTA trajectory for behavioral change.
@@ -1605,18 +1605,23 @@ Respond in JSON only:
             surface_findings.extend(tier2)
 
             # Step 7 -- Tier 3
-            # Only if target appears hardened
-            total_hits = len(tier1) + len(tier2)
-            if self.tier3_available and total_hits < 3:
+            # Escalate if target is hardened: fewer than 2 HIGH/CRITICAL
+            # findings. Low-severity hits don't count -- target is still
+            # hardened against meaningful attacks.
+            all_hits = tier1 + tier2
+            high_hits = sum(
+                1 for f in all_hits if f.severity_score >= 7.0
+            )
+            if self.tier3_available and high_hits < 2:
                 console.print(
-                    f"[dim]  {total_hits} findings -- "
-                    f"escalating to Tier 3[/dim]"
+                    f"[dim]  {high_hits} high-severity findings -- "
+                    f"target appears hardened, escalating to Tier 3[/dim]"
                 )
                 tier3 = self.run_tier3(conv, analyzer)
                 surface_findings.extend(tier3)
             elif self.tier3_available:
                 console.print(
-                    f"[dim]  {total_hits} findings -- "
+                    f"[dim]  {high_hits} high-severity findings -- "
                     f"Tier 3 not needed[/dim]"
                 )
 

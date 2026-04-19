@@ -28,7 +28,8 @@ from fpdf import FPDF
 import pandas as pd
 from rich.console import Console
 
-from core.findings import AggregatedFindings, Finding
+from core.findings import AggregatedFindings, Finding, FindingsAggregator
+from core.grc_constants import NIST_MAPPING, NERC_CIP_MAPPING
 
 console = Console()
 
@@ -87,51 +88,8 @@ def _get_font_paths() -> tuple:
         )
 
 
-# NIST SP 800-53 control mapping
-NIST_MAPPING = {
-    "prompt_injection":     ["SI-10", "SI-3", "SA-11"],
-    "jailbreak":            ["SI-10", "SI-3", "CA-8"],
-    "trust_escalation":     ["AC-2", "AC-6", "IA-2"],
-    "context_manipulation": ["SI-10", "SI-12", "AU-10"],
-    "data_exfiltration":    ["AC-4", "SI-12", "AU-9"],
-    "crescendo_attack":     ["SI-10", "AC-17", "CA-8"],
-    "zero_day":             ["RA-5", "SI-2", "SA-10"],
-    "cve_match":            ["RA-5", "SI-2", "SA-10"],
-    "exposed_admin":        ["AC-17", "CM-7", "SC-7"],
-    "outdated_ssl":         ["SC-8", "SC-23", "IA-8"],
-    "exposed_port":         ["CM-7", "SC-7", "CA-9"],
-    "header_missing":       ["SC-8", "SI-16", "CM-6"],
-    "subdomain":            ["CM-8", "RA-5", "SC-7"],
-    "ai_surface":           ["RA-5", "CA-8", "SI-10"],
-    "email_exposed":        ["AT-2", "PL-4", "RA-5"],
-    "username_exposed":     ["AT-2", "PL-4", "RA-5"],
-    "tech_stack":           ["CM-8", "RA-5", "SA-10"],
-    "credential_stuffing":  ["IA-5", "AC-7", "SI-10"],
-    "default":              ["RA-5", "CA-8", "SI-2"],
-}
-
-# NERC CIP mapping
-NERC_CIP_MAPPING = {
-    "prompt_injection":     ["CIP-007-6", "CIP-010-4"],
-    "jailbreak":            ["CIP-007-6", "CIP-010-4"],
-    "trust_escalation":     ["CIP-004-7", "CIP-007-6"],
-    "context_manipulation": ["CIP-007-6", "CIP-010-4"],
-    "data_exfiltration":    ["CIP-011-3", "CIP-007-6"],
-    "crescendo_attack":     ["CIP-007-6", "CIP-004-7"],
-    "zero_day":             ["CIP-007-6", "CIP-010-4"],
-    "cve_match":            ["CIP-007-6", "CIP-010-4"],
-    "exposed_admin":        ["CIP-005-7", "CIP-007-6"],
-    "outdated_ssl":         ["CIP-005-7", "CIP-007-6"],
-    "exposed_port":         ["CIP-005-7", "CIP-007-6"],
-    "header_missing":       ["CIP-007-6", "CIP-010-4"],
-    "subdomain":            ["CIP-005-7", "CIP-007-6"],
-    "ai_surface":           ["CIP-007-6", "CIP-010-4"],
-    "email_exposed":        ["CIP-004-7", "CIP-011-3"],
-    "username_exposed":     ["CIP-004-7", "CIP-011-3"],
-    "tech_stack":           ["CIP-010-4", "CIP-007-6"],
-    "credential_stuffing":  ["CIP-004-7", "CIP-007-6"],
-    "default":              ["CIP-007-6", "CIP-010-4"],
-}
+# NIST_MAPPING and NERC_CIP_MAPPING imported from core.grc_constants
+# (single source of truth — grc_mapper.py uses the same tables)
 
 # Remediation templates
 # TODO v2 - replace with LLM-generated remediations via query_llm()
@@ -552,10 +510,10 @@ class ReportGenerator:
                 )
 
             summary_text += (
-                f"\n\nAll findings are mapped to MITRE ATT&CK techniques, "
-                f"OWASP categories, NIST SP 800-53 controls, and NERC CIP "
-                f"standards where applicable. Remediation recommendations "
-                f"are provided for each finding."
+                "\n\nAll findings are mapped to MITRE ATT&CK techniques, "
+                "OWASP categories, NIST SP 800-53 controls, and NERC CIP "
+                "standards where applicable. Remediation recommendations "
+                "are provided for each finding."
             )
 
             pdf.multi_cell(0, 6, summary_text)
@@ -610,7 +568,7 @@ class ReportGenerator:
                 f"{self.timestamp}_{safe_target}_report.pdf"
             )
             pdf.output(str(pdf_path))
-            console.print(f"[green]PDF report generated[/green]")
+            console.print("[green]PDF report generated[/green]")
             return str(pdf_path)
 
         except Exception as e:
@@ -690,7 +648,7 @@ class ReportGenerator:
                     ].width = adjusted_width
 
             console.print(
-                f"[green]XLSX risk register generated[/green]"
+                "[green]XLSX risk register generated[/green]"
             )
             return str(xlsx_path)
 
@@ -754,7 +712,7 @@ class ReportGenerator:
                 json.dump(telemetry, f, indent=2)
 
             console.print(
-                f"[green]Telemetry log generated[/green]"
+                "[green]Telemetry log generated[/green]"
             )
             return str(telemetry_path)
 
@@ -769,8 +727,6 @@ if __name__ == "__main__":
     console.print(
         "[bold green]Testing R3D Report Generator...[/bold green]"
     )
-
-    from core.findings import FindingsAggregator, Finding
 
     aggregator = FindingsAggregator(target="test-target.com")
 

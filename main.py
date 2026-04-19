@@ -1,54 +1,62 @@
 """
 R3D Agent -- Main Entry Point
-CLI entry point for all R3D operations.
-Handles argument parsing, validation, and routing.
+Everything routes through here. Parses args, validates inputs,
+and hands off to the right command or fires up the orchestrator.
 
 Usage:
     python main.py --target example.com
     python main.py --target example.com --mode guided
     python main.py --target example.com --mode full-auto --auto-attack
-    python main.py --test-connection
     python main.py --setup-cve-db
+    python main.py --setup-cve-db --nvd-api-key <key>
+    python main.py --test-connection
     python main.py --improve
-    python main.py --update
     python main.py --cleanup --older-than 30
 
 All flags:
     --target          Domain or IP to assess
-    --mode            GUIDED / SEMI-AUTO / FULL-AUTO
-    --full-scan       Scan all 65535 ports
-    --auto-attack     LLM attacks without confirmation
-    --org-type        personal/small_business/enterprise/
-                      critical_infrastructure/all
-    --resume          Resume interrupted engagement
+    --mode            GUIDED / SEMI-AUTO / FULL-AUTO (default: SEMI-AUTO)
+    --full-scan       Scan all 65535 ports instead of top 1000
+    --auto-attack     LLM attacks fire without per-surface confirmation
+    --org-type        GRC framework set: personal / small_business /
+                      enterprise / critical_infrastructure / all
+    --nvd-api-key     NVD API key — cuts CVE DB build from 60 min to ~5 min
+    --resume          Resume an interrupted engagement from checkpoint
     --skip-llm        Skip LLM attack module
     --skip-trad       Skip traditional recon module
     --timeout         Engagement timeout in seconds (default 2700)
-    --improve         Run improvement engine
-    --setup-cve-db    Download NVD CVE database
-    --test-connection Verify all dependencies
-    --update          Pull latest code and update deps
-    --cleanup         Remove old engagement files
+    --improve         Run the improvement engine on recent engagements
+    --setup-cve-db    Download and build the local NVD CVE database
+    --test-connection Verify all deps are installed and reachable
+    --update          Pull latest code and reinstall deps
+    --cleanup         Remove old engagement output files
     --older-than      Days threshold for cleanup (default 30)
-    --fast-mode       Reduce delays for testing
+    --fast-mode       Reduce delays — for local testing only
 
-Validation:
-    Target stripped of protocol and trailing slashes
-    Mode validated against allowed values
-    FULL-AUTO auto-enables --auto-attack with warning
-    --cleanup requires confirmation before deleting
+Input validation:
+    Target stripped of protocol prefix and trailing slashes
+    Mode normalized (SEMIAUTO -> SEMI-AUTO, etc.)
+    FULL-AUTO auto-enables --auto-attack with a visible warning
+    --cleanup asks for confirmation before anything gets deleted
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
 import sys
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Windows UTF-8 fix — must happen before any other imports or prints.
+# When stdout is piped or the terminal uses cp1252, Unicode characters
+# like ✓ ✗ crash with 'charmap' codec errors. Force UTF-8 globally.
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from rich.console import Console
 
@@ -168,7 +176,8 @@ def cmd_test_connection():
     try:
         r = subprocess.run(
             ["nmap", "--version"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
+            check=False  # returncode checked manually below
         )
         if r.returncode == 0:
             ver = r.stdout.split("\n")[0].replace(
@@ -323,22 +332,34 @@ def cmd_test_connection():
         )
 
 
-def cmd_setup_cve_db():
+def cmd_setup_cve_db(api_key: str = None):
     """
     Download NVD CVE database locally.
-    Calls CVEEngine setup method.
+    Authenticated (API key): ~5 minutes.
+    Unauthenticated        : 30-60 minutes.
     """
     console.print(
         "\n[bold cyan]R3D -- CVE Database Setup[/bold cyan]\n"
     )
-    console.print(
-        "[yellow]This downloads the NVD CVE database locally.\n"
-        "Takes 30-60 minutes. Only needed once.[/yellow]\n"
-    )
 
-    response = input(
-        "Download CVE database now? [Y/N]: "
-    ).strip().upper()
+    if api_key:
+        console.print(
+            "[green]  API key provided — authenticated mode (~5 min)[/green]\n"
+        )
+    else:
+        console.print(
+            "[yellow]This downloads the NVD CVE database locally.\n"
+            "Takes 30-60 minutes without an API key.\n"
+            "Tip: pass --nvd-api-key to finish in ~5 minutes.[/yellow]\n"
+        )
+
+    try:
+        response = input(
+            "Download CVE database now? [Y/N]: "
+        ).strip().upper()
+    except EOFError:
+        console.print("[dim]Non-interactive mode — skipping CVE setup.[/dim]")
+        return
 
     if response != "Y":
         console.print("[dim]Cancelled.[/dim]")
@@ -346,7 +367,7 @@ def cmd_setup_cve_db():
 
     try:
         from core.cve_engine import setup_cve_db
-        setup_cve_db()
+        setup_cve_db(api_key=api_key)
         console.print(
             "[green]CVE database downloaded successfully.[/green]"
         )
@@ -369,7 +390,8 @@ def cmd_update():
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
             capture_output=True, text=True,
-            timeout=10, cwd=str(BASE_DIR)
+            timeout=10, cwd=str(BASE_DIR),
+            check=False  # returncode not used — stdout content is the signal
         )
         if status_result.stdout.strip():
             console.print(
@@ -395,7 +417,8 @@ def cmd_update():
         pull = subprocess.run(
             ["git", "pull", "origin", "main"],
             capture_output=True, text=True,
-            timeout=60, cwd=str(BASE_DIR)
+            timeout=60, cwd=str(BASE_DIR),
+            check=False  # returncode checked manually below
         )
         console.print(pull.stdout.strip())
         if pull.returncode != 0:
@@ -418,7 +441,8 @@ def cmd_update():
                 "-r", str(BASE_DIR / "requirements.txt"),
                 "--break-system-packages", "-q"
             ],
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, timeout=120,
+            check=False  # returncode checked manually below
         )
         if pip.returncode == 0:
             console.print(
@@ -582,6 +606,14 @@ def main():
         help="Organization type for compliance mapping"
     )
 
+    # NVD API key — authenticated download is ~5 min vs 30-60 min unauth
+    parser.add_argument(
+        "--nvd-api-key",
+        type=str,
+        default=None,
+        help="NVD API key for faster CVE database downloads (~5 min vs 30-60 min)"
+    )
+
     # Resume
     parser.add_argument(
         "--resume",
@@ -648,6 +680,16 @@ def main():
         default=30,
         help="Days threshold for cleanup (default: 30)"
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help=(
+            "Ollama model to use for LLM calls "
+            "(default: llama3). "
+            "Examples: qwen2.5-coder:14b, gemma3:4b, llama3:latest"
+        )
+    )
 
     args = parser.parse_args()
 
@@ -661,7 +703,7 @@ def main():
         return
 
     if args.setup_cve_db:
-        cmd_setup_cve_db()
+        cmd_setup_cve_db(api_key=args.nvd_api_key)
         return
 
     if args.update:
@@ -702,6 +744,16 @@ def main():
         show_banner()
     except Exception:
         pass
+
+    # Set model override before any LLM module loads
+    # llm_client.py reads OLLAMA_MODEL at import time default,
+    # but _resolve_model() is called at runtime so env var set
+    # here takes effect for the whole engagement.
+    if args.model:
+        os.environ["OLLAMA_MODEL"] = args.model
+        console.print(
+            f"[dim]  Model override: {args.model}[/dim]"
+        )
 
     # Validate target
     target = _validate_target(args.target)

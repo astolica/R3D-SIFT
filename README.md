@@ -5,7 +5,7 @@ Fully local. No cloud APIs. No cost per run. Zero data leaves your machine.
 
 Built on Python · Ollama · Nmap · 14 months of original AI security research.
 
-**V1.0 complete. Most recent engagement: scanme.nmap.org -- 12 findings. Typical engagement time: 15-25 minutes.**
+**V1.0 complete. Most recent engagement: scanme.nmap.org -- 11 findings. Typical engagement time: 15-25 minutes.**
 
 > Built by a college senior at the University of Arizona. Not a research lab. Not a funded startup. One person, one laptop, 14 months of original research, and a problem worth solving.
 
@@ -70,7 +70,7 @@ Unknown findings are flagged, never fabricated. R3D's tiered CVE lookup implemen
 
 R3D is a research-grade V1. It works. It runs live engagements. It produces real output. But be aware of the following before using it in a professional context:
 
-- **Output quality is bounded by llama3:8b.** Local inference on a consumer GPU is fast and private but not as capable as frontier models. Executive summaries and KB-guided payloads reflect the reasoning ceiling of the model running locally.
+- **Output quality is bounded by whatever local model you run.** The `--model` flag lets you swap models at runtime -- larger models (qwen2.5-coder:14b, gemma3:12b) produce better technical analysis than smaller ones. Local inference on a consumer GPU is fast and private but not as capable as frontier models. Executive summaries and KB-guided payloads reflect the reasoning ceiling of the model running locally.
 - **Compliance mappings should be reviewed by a domain expert before real audit use.** R3D's GRC output is a starting point and a significant time-saver -- not a substitute for a qualified compliance analyst reviewing findings before they go into an audit package.
 - **Tier 3 is research-grade, not production-validated.** TEP-005 and TEP-010 are original research vectors developed over 14 months of behavioral study. They have not been peer-reviewed or independently validated.
 - **CVE correlation is only as current as your local NVD database.** Run `python main.py --setup-cve-db` to refresh. Without it, CVE matching falls back to the NVD API which has rate limits.
@@ -261,7 +261,7 @@ python -m venv venv
 venv\Scripts\activate          # Windows
 source venv/bin/activate       # Linux/Mac
 pip install -r requirements.txt
-ollama pull llama3:8b
+ollama pull llama3           # default model, or pull any Ollama model you prefer
 
 # 2. Verify setup
 python main.py --test-connection
@@ -281,6 +281,8 @@ python main.py --target scanme.nmap.org --mode guided
 Engagement:
   --target          Domain or IP (https:// stripped automatically)
   --mode            guided / semi-auto / full-auto
+  --model           Ollama model for all LLM calls (default: llama3)
+                    Examples: qwen2.5-coder:14b, gemma3:4b, llama3:latest
   --full-scan       All 65535 ports (default: top 1000)
   --auto-attack     LLM attacks without per-surface confirmation
   --org-type        personal / small_business / enterprise /
@@ -308,7 +310,7 @@ Every API call is a dollar. Every sensitive engagement is dozens of calls.
 
 For critical infrastructure assessments -- testing systems adjacent to power grid operations -- you cannot send data to a cloud API. The tool has to be local by design, not by configuration.
 
-R3D runs entirely on your hardware. RTX 5070 Ti runs llama3:8b fast enough for production use. Zero API cost. Zero data leaving the machine. Fully air-gappable for sensitive engagements.
+R3D runs entirely on your hardware. RTX 5070 Ti runs llama3 or qwen2.5-coder:14b fast enough for production use -- swap models at runtime with `--model`. Zero API cost. Zero data leaving the machine. Fully air-gappable for sensitive engagements.
 
 
 ## Repository Structure
@@ -322,6 +324,7 @@ r3d-agent/
 │   ├── llm_client.py            Ollama wrapper + JSON validation
 │   ├── cve_engine.py            NVD CVE lookup (295,406 local)
 │   ├── findings.py              Finding dataclass + MITRE + OWASP
+│   ├── grc_constants.py         Shared NIST + NERC CIP mapping tables
 │   ├── report_gen.py            PDF + XLSX + telemetry JSON
 │   ├── verifier.py              Hallucination detection + NVD validation
 │   └── improvement_engine.py    Self-improvement loop + trend analysis
@@ -368,7 +371,7 @@ Coding:            250 hours
 Build sprint:      14 days (architecture through stable release)
 Audits:            pip-audit, bandit, pylint -- all resolved
 Hardware:          NVIDIA RTX 5070 Ti, 32GB DDR5, Windows 11
-LLM:               llama3:8b via Ollama (fully local)
+LLM:               llama3 (default) or any Ollama model via --model flag
 CVE database:      295,406 CVEs (local NVD)
 Payloads:          30 static (Tier 1) + adaptive (Tier 2)
                    + original research (Tier 3, auth installs)

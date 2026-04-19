@@ -10,6 +10,7 @@ Fixes applied:
     Fix 4: Available model auto-detection -- warns if model not found
 """
 
+import os
 import ollama
 import time
 import requests
@@ -74,7 +75,7 @@ def _resolve_model(model: str) -> str:
 def query_llm(
     prompt: str,
     system_prompt: str = SYSTEM_PROMPT,
-    model: str = "llama3",
+    model: str = os.environ.get("OLLAMA_MODEL", "llama3"),
     expect_json: bool = False
 ) -> LLMResponse:
     """
@@ -162,7 +163,7 @@ def _clean_json_response(text: str) -> str:
     return text
 
 
-def _repair_json(text: str, error: str) -> Optional[str]:
+def _repair_json(text: str, _error: str) -> Optional[str]:
     """Attempt basic JSON repair for common LLM formatting issues."""
     try:
         cleaned = _clean_json_response(text)

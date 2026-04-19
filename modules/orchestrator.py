@@ -1,39 +1,39 @@
 """
 R3D Agent -- Master Orchestrator
-Wires all four modules together into a complete engagement.
-Manages sequencing, checkpointing, context filtering,
-safety gates, and final report generation.
+The glue that holds everything together. Takes the target and mode,
+runs the four modules in order, and produces the final reports.
+Every design decision here is about making engagements reliable —
+a crash in SSL audit shouldn't kill the CVE findings we already have.
 
 Engagement flow:
-    1.  Target authorization consent
-    2.  Load or create engagement state
-    3.  OSINT reconnaissance
-    4.  Context filter before LLM handoff
-    5.  LLM attack suite (if AI surfaces found)
-    6.  Traditional reconnaissance
-    7.  Findings aggregation
-    8.  Verifier hook (if available)
-    9.  GRC compliance mapping
-    10. Report generation
-    11. Final engagement summary
+    1.  Authorization consent gate (operator must type YES)
+    2.  Load or create engagement state (supports --resume)
+    3.  OSINT reconnaissance — passive surface mapping
+    4.  Context filter — strips noise before handing profile to LLM module
+    5.  LLM attack suite — only runs if OSINT found AI surfaces
+    6.  Traditional recon — active: ports, SSL, headers, endpoints, JS
+    7.  Findings aggregation — dedup, score, MITRE/OWASP mapping
+    8.  Verifier — quality gate on LLM findings
+    9.  GRC compliance mapping — findings → framework controls
+    10. Report generation — PDF, XLSX, telemetry
+    11. Summary + engagement saved to disk
 
 Checkpointing:
-    State saved after every module completes.
-    --resume flag loads state and skips completed modules.
-    Engagement never needs to restart from scratch.
+    State file written after every module. --resume reads it and
+    skips completed steps. If OSINT ran but traditional crashed,
+    --resume picks up at traditional recon — no wasted time.
 
-Safety guarantees:
-    GUIDED mode gates enforced -- never bypassed
-    Sherlock blocked in FULL-AUTO regardless of mode
-    Target authorization consent required before start
-    Context filtered before LLM handoff
-    Critical findings alert operator in GUIDED mode
+Safety:
+    GUIDED mode gates are enforced and can't be bypassed by flags
+    Sherlock is blocked in FULL-AUTO regardless of what's passed
+    Authorization gate runs before any network traffic touches the target
+    Context filtered before LLM handoff — don't feed raw OSINT noise to Tier 2
 
 Performance:
-    2 second buffer between modules
-    45 minute overall timeout (configurable)
-    Progress heartbeat every 30 seconds on long ops
-    Elapsed time tracked and reported
+    2s buffer between modules — gives slow systems time to settle
+    45 minute overall timeout (configurable via --timeout)
+    Progress heartbeat every 30s so operator knows it's still alive
+    Elapsed time tracked per module and total
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
@@ -875,7 +875,7 @@ class Orchestrator:
         # AGGREGATION
         # ------------------------------------------------------------------ #
         console.print(
-            f"\n[cyan]Aggregating all findings...[/cyan]"
+            "\n[cyan]Aggregating all findings...[/cyan]"
         )
 
         try:
@@ -1034,7 +1034,7 @@ if __name__ == "__main__":
         auto_attack=False,
     )
     console.print(
-        f"\nOrchestrator initialized:"
+        "\nOrchestrator initialized:"
     )
     console.print(
         f"  Target: {orch.target}"

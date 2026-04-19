@@ -1,23 +1,25 @@
 """
 R3D Agent -- Banner Module
-Terminal wizard UI shown on every startup.
-Shows ASCII art, system checks, and recent engagement history.
+Startup display. Runs before everything else.
+Shows the ASCII art, a 6-point system check, and the last 3 engagements.
 
-Called by main.py before any operation runs.
-Never raises -- all checks fail gracefully.
+If any check fails, it prints a fix hint inline — operator knows exactly
+what to do before wasting 10 minutes waiting for a module to crash.
+Never raises — checks fail gracefully so a missing optional dep
+doesn't block a full run.
 
 System checks:
-    Python version    -- must be 3.10+
-    Nmap installed    -- subprocess nmap --version
-    Ollama running    -- HTTP check localhost:11434
-    llama3:8b loaded  -- ollama list parse
-    CVE database      -- file existence check
-    Internet access   -- socket connect to 8.8.8.8
+    Python version  -- 3.10+ required
+    Nmap            -- subprocess nmap --version
+    Ollama          -- HTTP ping to localhost:11434
+    LLM Model       -- checks whatever model is actually loaded (any model)
+    CVE database    -- file existence + size (optional but recommended)
+    Internet        -- socket connect to 8.8.8.8:53
 
 Color coding:
-    Green  -- check passed
-    Red    -- check failed, fix hint shown
-    Yellow -- warning, optional but recommended
+    Green  -- all good
+    Red    -- broken, fix hint shown next to it
+    Yellow -- warning, won't block a run but worth knowing
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux
 """
@@ -26,7 +28,6 @@ import sys
 import socket
 import subprocess
 import requests
-from datetime import datetime
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
@@ -37,7 +38,12 @@ console = Console()
 BASE_DIR        = Path(__file__).parent.parent
 OUTPUT_DIR      = BASE_DIR / "output"
 ENGAGEMENTS_DIR = OUTPUT_DIR / "engagements"
-CVE_DB_PATH = BASE_DIR / "data" / "cve_database.json"
+# Check .db first (new SQLite format), fall back to .json (legacy)
+CVE_DB_PATH = (
+    BASE_DIR / "data" / "cve_database.db"
+    if (BASE_DIR / "data" / "cve_database.db").exists()
+    else BASE_DIR / "data" / "cve_database.json"
+)
 R3D_VERSION     = "1.0"
 
 ASCII_ART = r"""
@@ -64,7 +70,8 @@ def _check_nmap() -> tuple[bool, str, str]:
     try:
         r = subprocess.run(
             ["nmap", "--version"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
+            check=False  # returncode checked manually below
         )
         if r.returncode == 0:
             first = r.stdout.split("\n")[0]
@@ -79,9 +86,8 @@ def _check_nmap() -> tuple[bool, str, str]:
 
 def _check_ollama() -> tuple[bool, str, str]:
     """
-    Check Ollama running AND model available in one API call.
-    Fix: was two separate requests to same endpoint.
-    Returns (ok, label, fix).
+    Ping Ollama's REST API to confirm the server is up.
+    Returns (ok, label, fix_hint).
     """
     try:
         resp = requests.get(
@@ -96,10 +102,11 @@ def _check_ollama() -> tuple[bool, str, str]:
 
 def _check_model() -> tuple[bool, str, str]:
     """
-    Check llama3 model is downloaded.
-    Fix: reuses cached result from _check_ollama call --
-    reads same endpoint but only if Ollama is confirmed up.
-    Returns (ok, label, fix).
+    Confirm at least one model is loaded in Ollama.
+    Model-agnostic — works with llama3, qwen, gemma, anything.
+    Shows the first loaded model by name so the operator knows
+    exactly what they're running with.
+    Returns (ok, label, fix_hint).
     """
     try:
         resp = requests.get(
@@ -110,22 +117,21 @@ def _check_model() -> tuple[bool, str, str]:
             models = [
                 m.get("name", "")
                 for m in data.get("models", [])
+                if m.get("name", "")
             ]
-            if any("llama3" in m for m in models):
-                matched = next(
-                    m for m in models if "llama3" in m
-                )
-                return True, f"{matched} loaded", ""
+            if models:
+                # Show first loaded model as representative
+                return True, f"{models[0]} loaded", ""
             return (
                 False,
-                "llama3 not found",
-                "Run: ollama pull llama3:8b (4.7GB)"
+                "No models loaded",
+                "Run: ollama pull <model> (e.g. ollama pull gemma3:4b)"
             )
     except Exception:
         pass
     return (
         False,
-        "llama3 unknown",
+        "Model check failed",
         "Start Ollama first: ollama serve"
     )
 
@@ -143,10 +149,14 @@ def _check_cve_db() -> tuple[bool, str, str]:
 
 
 def _check_internet() -> tuple[bool, str, str]:
-    """Check internet connectivity. Returns (ok, label, fix)."""
+    """
+    Quick internet reachability check via TCP to 8.8.8.8:53.
+    If this fails, OSINT and NVD API calls will also fail —
+    good to know up front rather than mid-engagement.
+    Returns (ok, label, fix_hint).
+    """
     try:
         socket.setdefaulttimeout(3)
-        # Fix: use context manager so socket is always closed
         with socket.socket(
             socket.AF_INET, socket.SOCK_STREAM
         ) as s:
@@ -204,7 +214,7 @@ def _get_commit_hash() -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, timeout=5,
-            cwd=str(BASE_DIR)
+            cwd=str(BASE_DIR), check=False  # returncode checked manually below
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -240,7 +250,7 @@ def show_banner(skip_checks: bool = False):
         ("Python",        _check_python),
         ("Nmap",          _check_nmap),
         ("Ollama",        _check_ollama),
-        ("llama3:8b",     _check_model),
+        ("LLM Model",     _check_model),
         ("CVE Database",  _check_cve_db),
         ("Internet",      _check_internet),
     ]
