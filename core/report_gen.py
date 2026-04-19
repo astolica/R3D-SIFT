@@ -1,20 +1,24 @@
 """
-R3D Agent — Report Generator
+R3D Agent -- Report Generator
 Takes AggregatedFindings and produces:
 1. Professional PDF executive report
 2. XLSX risk register (NIST SP 800-53 + NERC CIP mapped)
 3. Telemetry log (blue team artifact)
+4. Splunk HEC JSON (drop into Splunk HTTP Event Collector, ready to go)
+5. Elastic ECS JSON (drop into filebeat/logstash, ECS mapped)
 
-The PDF is for humans — executives, security architects, hiring managers.
-The XLSX is for compliance — GRC analysts, auditors, regulators.
-The telemetry log is for defenders — SOC analysts correlating against SIEM.
+The PDF is for humans -- executives, security architects, hiring managers.
+The XLSX is for compliance -- GRC analysts, auditors, regulators.
+The telemetry log is for defenders -- SOC analysts correlating against SIEM.
+The Splunk and Elastic files are for blue teams who want to feed findings
+directly into their SIEM without any manual reformatting.
 
 Security fixes applied:
 - Consistent regex path sanitization (matches CVE engine pattern)
 - Explicit None handling in XLSX column sizing
 - Scan duration and version metadata in telemetry log
 - TODO markers for v2 LLM-generated executive summary
-- Unicode font (Arial) for PDF — supports all special characters
+- Unicode font (Arial) for PDF -- supports all special characters
 
 Compatibility: Windows 10/11, Ubuntu, Kali Linux, macOS
 """
@@ -381,8 +385,8 @@ class ReportGenerator:
     def generate_all(self) -> dict:
         """
         Generate all report outputs simultaneously.
-        Each output fails independently.
-        Returns dict with paths to all generated files.
+        Each output fails independently -- one broken format doesn't
+        kill the rest. Returns dict with paths to all generated files.
         """
         console.print("\n[bold cyan]Generating reports...[/bold cyan]")
 
@@ -399,6 +403,16 @@ class ReportGenerator:
         telemetry_path = self.generate_telemetry_log()
         if telemetry_path:
             results["telemetry"] = telemetry_path
+
+        # SIEM exports -- blue team can drop these straight into
+        # Splunk or Elastic without touching the data at all
+        splunk_path = self.generate_splunk_hec()
+        if splunk_path:
+            results["splunk_hec"] = splunk_path
+
+        elastic_path = self.generate_elastic_ecs()
+        if elastic_path:
+            results["elastic_ecs"] = elastic_path
 
         console.print(
             f"\n[bold green]Reports generated - "
@@ -716,6 +730,190 @@ class ReportGenerator:
         except Exception as e:
             console.print(
                 f"[red]Telemetry log failed: {str(e)}[/red]"
+            )
+            return None
+
+    def generate_splunk_hec(self) -> Optional[str]:
+        """
+        Generate Splunk HEC (HTTP Event Collector) ready JSON.
+        One event per finding, wrapped in the HEC envelope Splunk expects.
+
+        Blue team just drops this file into Splunk -- no reformatting needed.
+        sourcetype is r3d:finding so you can build searches on it straight away.
+
+        How to ingest:
+          curl -k https://splunk:8088/services/collector/event \
+            -H "Authorization: Splunk <HEC_TOKEN>" \
+            -d @<this_file>
+        Or just point a file monitor at the output folder.
+        """
+        try:
+            events = []
+
+            for finding in self.aggregated.findings:
+                # convert iso timestamp to unix epoch for splunk's time field
+                # splunk wants a float, not a string
+                try:
+                    ts = datetime.fromisoformat(
+                        finding.timestamp
+                    ).timestamp()
+                except Exception:
+                    ts = datetime.now().timestamp()
+
+                events.append({
+                    "time":       ts,
+                    "source":     "r3d-agent",
+                    "sourcetype": "r3d:finding",
+                    "host":       self.target,
+                    "index":      "security",
+                    "event": {
+                        "engagement_id":   f"R3D_{self.timestamp}",
+                        "target":          self.target,
+                        "finding_id":      finding.id,
+                        "title":           finding.title,
+                        "description":     finding.description,
+                        "severity":        finding.severity_label,
+                        "severity_score":  finding.severity_score,
+                        "finding_type":    finding.finding_type,
+                        "source_module":   finding.source_module,
+                        "mitre_technique": finding.mitre_technique,
+                        "mitre_name":      finding.mitre_technique_name,
+                        "owasp_category":  finding.owasp_category,
+                        "owasp_name":      finding.owasp_category_name,
+                        "cve_id":          finding.cve_id,
+                        "cvss_score":      finding.cvss_score,
+                        "zero_day_flag":   finding.zero_day_flag,
+                        "r3d_version":     "1.0",
+                    }
+                })
+
+            safe_target = _sanitize_filename(self.target)
+            splunk_path = (
+                REPORTS_PATH /
+                f"{self.timestamp}_{safe_target}_splunk_hec.json"
+            )
+
+            with open(splunk_path, "w", encoding="utf-8") as f:
+                json.dump(events, f, indent=2)
+
+            console.print("[green]Splunk HEC export generated[/green]")
+            return str(splunk_path)
+
+        except Exception as e:
+            import traceback
+            console.print(
+                f"[red]Splunk HEC export failed: {str(e)}[/red]\n"
+                f"[dim]{traceback.format_exc()}[/dim]"
+            )
+            return None
+
+    def generate_elastic_ecs(self) -> Optional[str]:
+        """
+        Generate Elastic Common Schema (ECS) mapped JSON.
+        Each finding maps to standard ECS field names so Elastic
+        understands it natively -- no custom index mappings needed.
+
+        Blue team drops this into filebeat or logstash and it just works.
+
+        How to ingest:
+          filebeat -e -c filebeat.yml  (point filebeat.yml at this file)
+          Or use the Elastic file upload UI in Kibana.
+
+        ECS version targeted: 8.x
+        Field reference: https://www.elastic.co/guide/en/ecs/current
+        """
+        # map r3d severity labels to ECS numeric severity (0-10 scale)
+        # keeps it consistent with how elastic expects vulnerability severity
+        SEVERITY_MAP = {
+            "CRITICAL": 9,
+            "HIGH":     7,
+            "MEDIUM":   5,
+            "LOW":      3,
+            "INFO":     1,
+        }
+
+        try:
+            documents = []
+
+            for finding in self.aggregated.findings:
+                # normalize timestamp to ISO 8601 with Z suffix
+                # elastic is strict about this format
+                try:
+                    ts = datetime.fromisoformat(
+                        finding.timestamp
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                doc = {
+                    "@timestamp": ts,
+                    "message": (
+                        f"R3D finding: {finding.severity_label} "
+                        f"-- {finding.title}"
+                    ),
+                    "event": {
+                        "kind":     "alert",
+                        "category": ["vulnerability"],
+                        "type":     ["info"],
+                        "module":   "r3d",
+                        "dataset":  "r3d.finding",
+                        "severity": SEVERITY_MAP.get(
+                            finding.severity_label, 1
+                        ),
+                        "action":   "finding_detected",
+                        "provider": "R3D Agent v1.0",
+                    },
+                    "host": {
+                        "name": self.target,
+                    },
+                    "vulnerability": {
+                        "id":       finding.cve_id or "",
+                        "severity": finding.severity_label,
+                        "score": {
+                            "base": finding.cvss_score or finding.severity_score
+                        },
+                        "category":    [finding.finding_type],
+                        "description": finding.description,
+                    },
+                    "threat": {
+                        "framework": "MITRE ATT&CK",
+                        "technique": {
+                            "id":   finding.mitre_technique,
+                            "name": finding.mitre_technique_name,
+                        },
+                    },
+                    # extra r3d context lives in labels -- ECS compliant
+                    # way to add custom fields without breaking the schema
+                    "labels": {
+                        "engagement_id":  f"R3D_{self.timestamp}",
+                        "r3d_finding_id": finding.id,
+                        "source_module":  finding.source_module,
+                        "owasp_category": finding.owasp_category,
+                        "owasp_name":     finding.owasp_category_name,
+                        "zero_day_flag":  str(finding.zero_day_flag).lower(),
+                        "r3d_version":    "1.0",
+                    },
+                }
+
+                documents.append(doc)
+
+            safe_target = _sanitize_filename(self.target)
+            elastic_path = (
+                REPORTS_PATH /
+                f"{self.timestamp}_{safe_target}_elastic_ecs.json"
+            )
+
+            with open(elastic_path, "w", encoding="utf-8") as f:
+                json.dump(documents, f, indent=2)
+
+            console.print("[green]Elastic ECS export generated[/green]")
+            return str(elastic_path)
+
+        except Exception as e:
+            import traceback
+            console.print(
+                f"[red]Elastic ECS export failed: {str(e)}[/red]\n"
+                f"[dim]{traceback.format_exc()}[/dim]"
             )
             return None
 
