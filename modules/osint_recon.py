@@ -237,9 +237,7 @@ def _sanitize_username(username: str) -> str:
     return re.sub(r'[^a-zA-Z0-9._\-]', '', username)[:50]
 
 
-def _sanitize_filename(value: str) -> str:
-    """Safe filename component. Consistent with CVE engine pattern."""
-    return re.sub(r'[^a-zA-Z0-9_\-]', '_', value)[:30]
+from core.utils import sanitize_filename as _sanitize_filename
 
 
 def _get_headers(referer: str = "") -> dict:

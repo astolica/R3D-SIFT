@@ -354,8 +354,17 @@ class Verifier:
             expect_json=True
         )
 
-        if result and isinstance(result.content, dict):
-            return bool(result.content.get("duplicate", False))
+        if result and result.content:
+            # query_llm returns content as a string even with expect_json=True.
+            # Parse it here so .get() works correctly.
+            content = result.content
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content)
+                except (json.JSONDecodeError, ValueError):
+                    return False
+            if isinstance(content, dict):
+                return bool(content.get("duplicate", False))
 
         return False
 

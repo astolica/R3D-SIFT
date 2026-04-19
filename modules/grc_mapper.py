@@ -193,9 +193,7 @@ DUE_DATE_MAP = {
 # HELPERS
 # ------------------------------------------------------------------ #
 
-def _sanitize_filename(value: str) -> str:
-    """Safe filename component. No illegal chars."""
-    return re.sub(r'[^a-zA-Z0-9_\-]', '_', value)[:30]
+from core.utils import sanitize_filename as _sanitize_filename
 
 
 def _sanitize_sheet_name(value: str) -> str:

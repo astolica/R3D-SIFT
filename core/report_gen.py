@@ -195,14 +195,7 @@ REMEDIATION_TEMPLATES = {
 }
 
 
-def _sanitize_filename(value: str, max_length: int = 30) -> str:
-    """
-    Sanitize string for safe use in file and folder names.
-    Consistent with CVE engine sanitization pattern.
-    Prevents path traversal on Windows and Linux.
-    """
-    sanitized = re.sub(r'[^a-zA-Z0-9_\-]', '_', value)
-    return sanitized[:max_length]
+from core.utils import sanitize_filename as _sanitize_filename
 
 
 def _sanitize_for_pdf(text: str, max_length: int = 2000) -> str:
@@ -572,8 +565,10 @@ class ReportGenerator:
             return str(pdf_path)
 
         except Exception as e:
+            import traceback
             console.print(
-                f"[red]PDF generation failed: {str(e)}[/red]"
+                f"[red]PDF generation failed: {str(e)}[/red]\n"
+                f"[dim]{traceback.format_exc()}[/dim]"
             )
             return None
 
@@ -653,8 +648,10 @@ class ReportGenerator:
             return str(xlsx_path)
 
         except Exception as e:
+            import traceback
             console.print(
-                f"[red]XLSX generation failed: {str(e)}[/red]"
+                f"[red]XLSX generation failed: {str(e)}[/red]\n"
+                f"[dim]{traceback.format_exc()}[/dim]"
             )
             return None
 

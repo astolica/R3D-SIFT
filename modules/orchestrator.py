@@ -80,9 +80,7 @@ AI_RELEVANT_KEYWORDS = [
 # HELPERS
 # ------------------------------------------------------------------ #
 
-def _sanitize_filename(value: str) -> str:
-    """Safe filename component."""
-    return re.sub(r'[^a-zA-Z0-9_\-]', '_', value)[:30]
+from core.utils import sanitize_filename as _sanitize_filename
 
 
 def _generate_engagement_id(target: str) -> str:
@@ -127,7 +125,9 @@ class Heartbeat:
         """Stop heartbeat thread."""
         self.running = False
         if self._thread:
-            self._thread.join(timeout=2)
+            # Timeout must exceed HEARTBEAT_INTERVAL (30s) so join doesn't
+            # return while the thread is mid-sleep and become unreachable.
+            self._thread.join(timeout=35)
         console.print()  # newline after dots
 
     def _beat(self):

@@ -599,11 +599,16 @@ class ImprovementEngine:
         """
         Save approved suggestions to improvement log.
         Appends to existing log -- never overwrites history.
+        Capped at 500 entries (oldest pruned) to prevent unbounded growth.
         Never raises -- non-critical if save fails.
         """
+        MAX_LOG_ENTRIES = 500
         try:
             existing = self._load_improvement_log()
             existing.extend(entries)
+            # Prune oldest entries if log exceeds cap
+            if len(existing) > MAX_LOG_ENTRIES:
+                existing = existing[-MAX_LOG_ENTRIES:]
             with open(
                 IMPROVEMENT_LOG, "w", encoding="utf-8"
             ) as f:
