@@ -75,6 +75,7 @@ R3D is a research-grade V1. It works. It runs live engagements. It produces real
 - **Tier 3 is research-grade, not production-validated.** TEP-005 and TEP-010 are original research vectors developed over 14 months of behavioral study. They have not been peer-reviewed or independently validated.
 - **CVE correlation is only as current as your local NVD database.** Run `python main.py --setup-cve-db` to refresh. Without it, CVE matching falls back to the NVD API which has rate limits.
 - **False positives are possible on AI surface detection.** The POST confirmation step significantly reduces them but targets with unusual HTTP behavior may still produce noise.
+- **`--resume` is not functional in V1.** The flag exists and checkpointing logic is in place, but engagement state is not correctly re-synced on load. Flagged for V2. Do not rely on it for production engagements.
 
 These limitations are documented because engineering maturity means knowing what your tool does not do as well as what it does. Also shows my limitations as a whole as I am still learning myself.
 
@@ -182,6 +183,8 @@ The full thinking behind this is in `docs/my-approach.md`.
               │  XLSX risk register      MITRE + OWASP + frameworks │
               │  XLSX compliance map     One sheet per framework    │
               │  JSON telemetry log      SIEM ingestion artifact    │
+              │  Splunk HEC export       Drop-in for Splunk ingest  │
+              │  Elastic ECS export      ECS 8.x for Kibana/Elastic │
               │  Verification report     Hallucination audit trail  │
               │  Improvement log         Approved KB suggestions    │
               └─────────────────────────────────────────────────────┘
@@ -325,7 +328,8 @@ r3d-agent/
 │   ├── cve_engine.py            NVD CVE lookup (295,406 local)
 │   ├── findings.py              Finding dataclass + MITRE + OWASP
 │   ├── grc_constants.py         Shared NIST + NERC CIP mapping tables
-│   ├── report_gen.py            PDF + XLSX + telemetry JSON
+│   ├── utils.py                 Shared utilities (sanitize_filename)
+│   ├── report_gen.py            PDF + XLSX + telemetry + SIEM exports
 │   ├── verifier.py              Hallucination detection + NVD validation
 │   └── improvement_engine.py    Self-improvement loop + trend analysis
 ├── modules/
