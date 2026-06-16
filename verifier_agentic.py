@@ -16,6 +16,7 @@ WHAT CHANGED FROM BASELINE:
         LLM receives full finding context + session memory (AgentContext).
         Must reason step by step before giving a disposition.
         Only fires on ~20-30% of findings.
+        NOW USES Abraham Yelifari's OllamaClient wrapper for LLM calls.
 
     AgentContext (new):
         Session memory that persists across ALL findings in one engagement.
@@ -53,6 +54,12 @@ ALEC'S AUDIT LAYER:
         - What changed and why
         - Final disposition
     Nothing gets modified without a snapshot first.
+
+ABRAHAM'S LLM CLIENT:
+    Pass 2 LLM calls now route through Abraham Yelifari's OllamaClient
+    wrapper (abraham_llm_client.py) instead of raw requests calls.
+    OllamaClient provides a clean interface to the local Ollama instance
+    with proper system/user prompt separation.
 """
 
 import json
@@ -66,7 +73,15 @@ from typing import Optional
 from rich.console import Console
 
 from core.findings import Finding, FindingsAggregator, AggregatedFindings
-from core.llm_client import query_llm, LLMResponse
+
+# Abraham Yelifari's LLM client wrapper
+# Provides clean system/user prompt interface to local Ollama instance
+# Drop abraham_llm_client.py in r3d-agent root alongside this file
+try:
+    from abraham_llm_client import OllamaClient
+    ABRAHAM_CLIENT_AVAILABLE = True
+except ImportError:
+    ABRAHAM_CLIENT_AVAILABLE = False
 
 console = Console()
 
@@ -81,36 +96,26 @@ REPORTS_DIR = OUTPUT_DIR / "reports"
 # ------------------------------------------------------------------ #
 # THRESHOLDS
 # ------------------------------------------------------------------ #
-CONFIDENCE_GATE            = 0.80   # Pass 1 exit -- tune via Phase 5 calibration
-SEVERITY_REMOVE_THRESHOLD  = 3.0   # hard remove regardless of confidence
-SEVERITY_FLAG_THRESHOLD    = 5.0   # flag uncertain
-DEDUP_SIMILARITY_THRESHOLD = 0.85  # difflib ratio
+CONFIDENCE_GATE            = 0.80
+SEVERITY_REMOVE_THRESHOLD  = 3.0
+SEVERITY_FLAG_THRESHOLD    = 5.0
+DEDUP_SIMILARITY_THRESHOLD = 0.85
 
 # ------------------------------------------------------------------ #
 # CONFIDENCE SCORE WEIGHTS -- must sum to 1.0
-# Each weight represents how much that check contributes to confidence.
-# CVE confirmation weighted highest because hallucinated CVEs are most
-# dangerous -- a fake CVE means a real vulnerability stays open.
 # ------------------------------------------------------------------ #
-WEIGHT_CVE_CONFIRMED   = 0.30  # CVE exists in NVD
-WEIGHT_CVSS_ALIGNED    = 0.20  # CVSS score matches severity tier
-WEIGHT_EVIDENCE_EXISTS = 0.20  # evidence file on disk
-WEIGHT_SEVERITY_RANGE  = 0.15  # severity in expected range for finding type
-WEIGHT_SOURCE_MODULE   = 0.15  # source module reliability
+WEIGHT_CVE_CONFIRMED   = 0.30
+WEIGHT_CVSS_ALIGNED    = 0.20
+WEIGHT_EVIDENCE_EXISTS = 0.20
+WEIGHT_SEVERITY_RANGE  = 0.15
+WEIGHT_SOURCE_MODULE   = 0.15
 
-# Source module reliability scores
-# traditional_recon and osint are deterministic so they never reach here.
-# llm_attack findings are LLM-generated so they start with lower trust.
 SOURCE_RELIABILITY = {
-    "llm_attack":       0.70,
+    "llm_attack":        0.70,
     "traditional_recon": 1.0,
     "osint_recon":       1.0,
 }
 
-# Expected severity ranges by finding type.
-# Used in Pass 1 to catch inflated/deflated scores.
-# A prompt injection scored 2.0 is suspicious -- too low for what it is.
-# A missing header scored 9.5 is suspicious -- too high for what it is.
 EXPECTED_SEVERITY_RANGES = {
     "prompt_injection":       (5.0, 10.0),
     "context_manipulation":   (4.0, 8.0),
@@ -121,9 +126,12 @@ EXPECTED_SEVERITY_RANGES = {
     "information_disclosure": (3.0, 7.0),
 }
 
-# NVD API
 NVD_CVE_URL         = "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
 NVD_REQUEST_TIMEOUT = 10
+
+# LLM model used for Pass 2 reasoning
+OLLAMA_MODEL = "llama3"
+OLLAMA_URL   = "http://localhost:11434/api/chat"
 
 
 # ================================================================== #
@@ -162,30 +170,23 @@ class AgentContext:
     Persists across ALL findings in one engagement.
     Passed to the LLM in every Pass 2 call as a context summary.
 
-    WHY THIS MATTERS:
-        Without this, every LLM call starts from scratch.
-        With this, if 3 prompt injections already confirmed at high confidence,
-        the LLM uses that as a prior when evaluating the 4th.
-        If CVEs keep getting stripped on a target, the LLM flags that pattern.
-        This is what makes the verifier agentic -- it builds a model of the
-        engagement as it goes, not just processes each finding in isolation.
-
-    PHASE 5 DATA SOURCE:
-        session_confidence_avg over many engagements tells you whether
-        your 0.80 threshold is calibrated correctly for the types of
-        targets you actually test against.
+    Without this, every LLM call starts from scratch.
+    With this, if 3 prompt injections already confirmed at high confidence,
+    the LLM uses that as a prior when evaluating the 4th.
+    If CVEs keep getting stripped on a target, the LLM flags that pattern.
+    This is what makes the verifier agentic -- it builds a model of the
+    engagement as it goes, not just processes each finding in isolation.
     """
     target:                  str
-    confirmed_finding_types: dict  = field(default_factory=dict)  # {type: count}
+    confirmed_finding_types: dict  = field(default_factory=dict)
     stripped_cve_count:      int   = 0
     session_confidence_avg:  float = 0.0
     confidence_readings:     list  = field(default_factory=list)
-    findings_seen:           list  = field(default_factory=list)  # titles
+    findings_seen:           list  = field(default_factory=list)
     pass2_invocations:       int   = 0
-    pass2_agreements:        int   = 0  # times LLM agreed with Pass 1 flag suggestion
+    pass2_agreements:        int   = 0
 
     def update(self, finding_type: str, confidence: float, title: str):
-        """Update context after a finding is processed."""
         self.confirmed_finding_types[finding_type] = (
             self.confirmed_finding_types.get(finding_type, 0) + 1
         )
@@ -196,11 +197,6 @@ class AgentContext:
         self.findings_seen.append(title)
 
     def context_summary(self) -> str:
-        """
-        Human-readable summary passed to LLM in Pass 2 prompts.
-        Gives the LLM the context it needs to reason about this finding
-        in relation to everything else seen this engagement.
-        """
         type_str = (
             ", ".join(f"{k}:{v}" for k, v in self.confirmed_finding_types.items())
             if self.confirmed_finding_types else "none yet"
@@ -223,91 +219,67 @@ class AgentContext:
 class VerifierDecision:
     """
     Immutable record of what happened to one finding.
-    Snapshot is taken BEFORE any modification is made.
+    Snapshot taken BEFORE any modification is made.
     Written to decisions.jsonl -- one line per finding.
-
-    This is the audit trail. A human can open decisions.jsonl and see
-    exactly why every finding was touched, flagged, or removed.
-    This directly implements Alec's point about logging every decision.
     """
     finding_id:           str
     finding_title:        str
     timestamp:            str
-    original_severity:    float           # severity BEFORE any modification
-    pass_one_confidence:  float           # confidence score from Pass 1
-    checks_failed:        list            # which checks pulled it below 0.80
-    pass_two_invoked:     bool            # did this finding reach Pass 2
-    pass_two_reasoning:   Optional[str]   # what the LLM reasoned
-    pass_two_disposition: Optional[str]   # what LLM suggested
-    final_disposition:    str             # what actually happened
-    modifications:        dict            # what changed and why
+    original_severity:    float
+    pass_one_confidence:  float
+    checks_failed:        list
+    pass_two_invoked:     bool
+    pass_two_reasoning:   Optional[str]
+    pass_two_disposition: Optional[str]
+    final_disposition:    str
+    modifications:        dict
     final_confidence:     float
-    ground_truth:         Optional[bool]  # True=real, False=hallucinated
-    correct_decision:     Optional[bool]  # was the decision right
+    ground_truth:         Optional[bool]
+    correct_decision:     Optional[bool]
 
 
 # ================================================================== #
 # AGENTIC METRICS
-# Same schema as BaselineMetrics for direct comparison.
-# Additional fields specific to two-pass architecture.
 # ================================================================== #
 
 class AgenticMetrics:
     """
     Records two-pass verifier statistics.
-    Output JSON has same core fields as BaselineMetrics so compare_metrics.py
-    can put them side by side directly.
-
-    ADDITIONAL vs BASELINE:
-        pass1_runtime_s       -- time spent on deterministic checks only
-        pass2_runtime_s       -- time spent on LLM reasoning only
-        pass1_exits           -- findings that cleared 0.80 and skipped LLM
-        pass1_exit_rate       -- % of findings that never needed LLM
-        pass2_invocations     -- findings that reached LLM reasoning
-        pass2_agreement_rate  -- how often LLM agreed with Pass 1's flag suggestion
-                                 High agreement -> raise threshold (Phase 5)
-                                 Low agreement  -> lower threshold (Phase 5)
-        avg_pass1_confidence  -- average confidence score across all findings
+    Same core schema as BaselineMetrics for direct comparison.
+    Additional fields: pass1/pass2 runtime split, exit rate, agreement rate.
     """
 
     def __init__(self):
-        self.engagement_start = time.time()
-        self.pass1_time       = 0.0
-        self.pass2_time       = 0.0
-        self.llm_calls        = 0
-        self.pass1_exits      = 0
+        self.engagement_start  = time.time()
+        self.pass1_time        = 0.0
+        self.pass2_time        = 0.0
+        self.llm_calls         = 0
+        self.pass1_exits       = 0
         self.pass2_invocations = 0
         self.pass2_agreements  = 0
-        self.decisions:        list[VerifierDecision] = []
-        self.confidence_scores: list[float]           = []
+        self.decisions:         list = []
+        self.confidence_scores: list = []
 
-    def record(
-        self,
-        decision:   VerifierDecision,
-        llm_called: bool,
-        p1_time:    float,
-        p2_time:    float
-    ):
+    def record(self, decision, llm_called, p1_time, p2_time):
         self.decisions.append(decision)
         self.confidence_scores.append(decision.pass_one_confidence)
         self.pass1_time += p1_time
         self.pass2_time += p2_time
         if llm_called:
-            self.llm_calls       += 1
+            self.llm_calls        += 1
             self.pass2_invocations += 1
         else:
             self.pass1_exits += 1
 
-    def _reliability_score(self, labeled: list) -> Optional[float]:
+    def _reliability_score(self, labeled):
         """
-        Mikayla's RS. Same formula as baseline for direct comparison.
-        +1 correct, -2 wrong, 0 skip, average by k.
+        Mikayla's RS formula: +1 correct, -2 wrong, 0 skip, average by k.
         Higher RS vs baseline = agentic makes fewer wrong calls.
         """
         if not labeled:
             return None
         total = sum(
-            1 if d.correct_decision is True
+            1  if d.correct_decision is True
             else -2 if d.correct_decision is False
             else 0
             for d in labeled
@@ -321,21 +293,21 @@ class AgenticMetrics:
         if total == 0:
             return {
                 "version": "two_pass_agentic",
-                "error": "No LLM findings processed -- target had no AI surfaces."
+                "error":   "No LLM findings processed -- target had no AI surfaces."
             }
 
-        passed     = [d for d in self.decisions if d.final_disposition == "pass"]
-        flagged    = [d for d in self.decisions if d.final_disposition == "flag"]
-        removed    = [d for d in self.decisions if d.final_disposition in ("remove", "duplicate")]
-        labeled    = [d for d in self.decisions if d.ground_truth is not None]
+        passed  = [d for d in self.decisions if d.final_disposition == "pass"]
+        flagged = [d for d in self.decisions if d.final_disposition == "flag"]
+        removed = [d for d in self.decisions if d.final_disposition in ("remove", "duplicate")]
+        labeled = [d for d in self.decisions if d.ground_truth is not None]
 
         false_negatives = [
             d for d in labeled
-            if d.final_disposition in ("pass","flag") and d.ground_truth is False
+            if d.final_disposition in ("pass", "flag") and d.ground_truth is False
         ]
         false_positives = [
             d for d in labeled
-            if d.final_disposition in ("remove","duplicate") and d.ground_truth is True
+            if d.final_disposition in ("remove", "duplicate") and d.ground_truth is True
         ]
         correct = [d for d in labeled if d.correct_decision is True]
 
@@ -349,29 +321,29 @@ class AgenticMetrics:
             2 * precision * recall / (precision + recall)
             if precision and recall else None
         )
-        avg_conf = sum(self.confidence_scores) / len(self.confidence_scores) if self.confidence_scores else 0
-        rs       = self._reliability_score(labeled)
-        cdr      = len(correct) / len(labeled) if labeled else None
+        avg_conf = (
+            sum(self.confidence_scores) / len(self.confidence_scores)
+            if self.confidence_scores else 0
+        )
+        rs  = self._reliability_score(labeled)
+        cdr = len(correct) / len(labeled) if labeled else None
 
         return {
             "version":      "two_pass_agentic",
             "generated_at": datetime.now().isoformat(),
+            "llm_client":   "abraham_ollama_client" if ABRAHAM_CLIENT_AVAILABLE else "fallback_requests",
 
-            # Runtime split -- shows where time is spent
             "total_runtime_s":    round(total_runtime, 2),
             "pass1_runtime_s":    round(self.pass1_time, 2),
             "pass2_runtime_s":    round(self.pass2_time, 2),
             "avg_finding_time_s": round(total_runtime / total, 4),
 
-            # LLM usage -- KEY comparison metric
-            # Should be 70-80% lower than baseline
-            "llm_calls":      self.llm_calls,
-            "llm_call_rate":  (
+            "llm_calls":     self.llm_calls,
+            "llm_call_rate": (
                 f"{self.llm_calls}/{total} "
                 f"({100*self.llm_calls//total if total else 0}%)"
             ),
 
-            # Two-pass specific
             "pass1_exits":          self.pass1_exits,
             "pass1_exit_rate":      f"{100*self.pass1_exits//total if total else 0}%",
             "pass2_invocations":    self.pass2_invocations,
@@ -389,41 +361,30 @@ class AgenticMetrics:
                 "removed": len(removed),
             },
 
-            # Ground truth metrics -- same schema as baseline for comparison
             "ground_truth_metrics": {
-                "labeled_findings": len(labeled),
+                "labeled_findings":      len(labeled),
                 "note": (
                     "Provide ground_truth_map to verify() to populate these."
-                ) if not labeled else f"{len(labeled)} findings labeled.",
-
-                # Mikayla's metrics
-                "reliability_score_RS":  rs if rs is not None else "N/A",
+                    if not labeled else f"{len(labeled)} findings labeled."
+                ),
+                "reliability_score_RS":  rs  if rs  is not None else "N/A",
                 "correct_decision_rate": round(cdr, 4) if cdr is not None else "N/A",
-
-                # Security metrics
-                "false_negatives":    len(false_negatives),
-                "false_positives":    len(false_positives),
-                "correct_decisions":  len(correct),
+                "false_negatives":       len(false_negatives),
+                "false_positives":       len(false_positives),
+                "correct_decisions":     len(correct),
                 "hallucination_rate": (
                     f"{100*len(false_negatives)//len(labeled)}%"
                     if labeled else "N/A"
                 ),
-
-                # ML metrics
                 "precision": round(precision, 4) if precision else "N/A",
                 "recall":    round(recall, 4)    if recall    else "N/A",
                 "f1_score":  round(f1, 4)        if f1        else "N/A",
             },
 
-            # Per-decision records for cross-engagement analysis
             "decisions": [asdict(d) for d in self.decisions],
         }
 
     def save(self, target: str) -> Path:
-        """
-        Save metrics JSON and decisions.jsonl audit trail.
-        Both timestamped -- nothing overwritten.
-        """
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         ts             = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         metrics_path   = REPORTS_DIR / f"{ts}_{target}_AGENTIC_metrics.json"
@@ -432,8 +393,6 @@ class AgenticMetrics:
         with open(metrics_path, "w", encoding="utf-8") as f:
             json.dump(self.summary(), f, indent=2)
 
-        # decisions.jsonl -- Alec's audit trail
-        # One JSON line per finding. Human-readable.
         with open(decisions_path, "w", encoding="utf-8") as f:
             for d in self.decisions:
                 f.write(json.dumps(asdict(d)) + "\n")
@@ -456,8 +415,8 @@ class Verifier:
             <  CONFIDENCE_GATE -> proceeds to Pass 2.
 
     Pass 2: Chain of Thought LLM reasoning on sub-0.80 findings only.
-            LLM gets full context + AgentContext session memory.
-            Must reason step by step before giving disposition.
+            Uses Abraham Yelifari's OllamaClient for LLM calls.
+            Falls back to raw requests if client not available.
 
     Every decision snapshotted in VerifierDecision before modification.
     All decisions written to decisions.jsonl for audit.
@@ -468,17 +427,30 @@ class Verifier:
         self.ollama_available = True
         self.metrics          = AgenticMetrics()
         self.context:         Optional[AgentContext] = None
+
+        # Initialise Abraham's LLM client if available
+        # Falls back to direct requests call if import failed
+        if ABRAHAM_CLIENT_AVAILABLE:
+            self.llm_client = OllamaClient(
+                model=OLLAMA_MODEL,
+                location=OLLAMA_URL
+            )
+            console.print("[dim]  LLM client: Abraham's OllamaClient[/dim]")
+        else:
+            self.llm_client = None
+            console.print("[dim]  LLM client: fallback (raw requests)[/dim]")
+
         self.stats = {
-            "total_reviewed":    0,
-            "passed":            0,
-            "flagged_uncertain": 0,
-            "removed":           0,
-            "cve_stripped":      0,
-            "duplicates_removed":0,
-            "pass1_exits":       0,
-            "pass2_invocations": 0,
+            "total_reviewed":     0,
+            "passed":             0,
+            "flagged_uncertain":  0,
+            "removed":            0,
+            "cve_stripped":       0,
+            "duplicates_removed": 0,
+            "pass1_exits":        0,
+            "pass2_invocations":  0,
         }
-        self.unverified_findings: list[dict] = []
+        self.unverified_findings: list = []
 
     # ------------------------------------------------------------------ #
     # PASS 1 -- CONFIDENCE SCORING
@@ -488,22 +460,11 @@ class Verifier:
         """
         Compute confidence score using deterministic checks only.
         No LLM involved. Fast. Runs on every LLM finding.
-
-        SCORING:
-            CVE in NVD           +0.30  (highest weight -- fake CVEs most dangerous)
-            CVSS aligned         +0.20  (inflated CVSS is a hallucination signal)
-            Evidence on disk     +0.20  (no evidence file = suspect)
-            Severity in range    +0.15  (out-of-range severity = likely hallucinated)
-            Source reliability   +0.15  (llm_attack gets 0.70, not full credit)
-
-        Partial credit (0.5x weight) given when check is not applicable
-        rather than failing the finding for missing data.
-
         Returns (finding, confidence_score, checks_failed_list).
         """
         score, checks_failed = 0.0, []
 
-        # CVE check: +0.30 if confirmed, +0.15 if no CVE (not a failure)
+        # CVE check
         if finding.cve_id:
             confirmed = self._nvd_check(finding.cve_id)
             if confirmed:
@@ -512,9 +473,9 @@ class Verifier:
                 checks_failed.append("cve_not_confirmed_in_nvd")
                 finding = self._strip_cve(finding, "not confirmed in NVD")
         else:
-            score += WEIGHT_CVE_CONFIRMED * 0.5  # partial -- no CVE to check
+            score += WEIGHT_CVE_CONFIRMED * 0.5
 
-        # CVSS alignment: +0.20 if within 2.0 delta, partial if no CVSS
+        # CVSS alignment
         if finding.cvss_score and finding.severity_score:
             delta = abs(finding.cvss_score - finding.severity_score)
             if delta <= 2.0:
@@ -524,7 +485,7 @@ class Verifier:
         else:
             score += WEIGHT_CVSS_ALIGNED * 0.5
 
-        # Evidence check: +0.20 if file exists, partial if no path set
+        # Evidence on disk
         if finding.raw_evidence_path:
             if Path(finding.raw_evidence_path).exists():
                 score += WEIGHT_EVIDENCE_EXISTS
@@ -533,7 +494,7 @@ class Verifier:
         else:
             score += WEIGHT_EVIDENCE_EXISTS * 0.5
 
-        # Severity range check: +0.15 if in expected range for finding type
+        # Severity range
         expected = EXPECTED_SEVERITY_RANGES.get(finding.finding_type)
         if expected:
             lo, hi = expected
@@ -544,22 +505,17 @@ class Verifier:
                     f"severity_{finding.severity_score}_outside_expected_{lo}-{hi}"
                 )
         else:
-            score += WEIGHT_SEVERITY_RANGE * 0.5  # unknown type, partial credit
+            score += WEIGHT_SEVERITY_RANGE * 0.5
 
-        # Source reliability: +0.15 * reliability_factor
+        # Source reliability
         reliability = SOURCE_RELIABILITY.get(finding.source_module, 0.5)
         score += WEIGHT_SOURCE_MODULE * reliability
 
         return finding, round(min(max(score, 0.0), 1.0), 4), checks_failed
 
     def _nvd_check(self, cve_id: str) -> bool:
-        """
-        Check if CVE exists in NVD. Returns True (confirmed) or True (fail open).
-        Returns False only when NVD actively says the CVE does not exist.
-        """
         if not self.nvd_available:
-            return True  # fail open -- don't penalize for NVD being down
-
+            return True
         try:
             resp = requests.get(
                 NVD_CVE_URL.format(cve_id=cve_id.strip()),
@@ -570,8 +526,7 @@ class Verifier:
                 return resp.json().get("totalResults", 0) > 0
             elif resp.status_code == 404:
                 return False
-            return True  # fail open on other codes
-
+            return True
         except requests.Timeout:
             self.nvd_available = False
             return True
@@ -582,7 +537,6 @@ class Verifier:
             return True
 
     def _strip_cve(self, finding: Finding, reason: str) -> Finding:
-        """Strip unconfirmed CVE. Update AgentContext CVE strip counter."""
         console.print(f"[yellow]    CVE stripped: {finding.cve_id} ({reason})[/yellow]")
         self.stats["cve_stripped"] += 1
         if self.context:
@@ -599,7 +553,51 @@ class Verifier:
 
     # ------------------------------------------------------------------ #
     # PASS 2 -- CHAIN OF THOUGHT REASONING
+    # Uses Abraham's OllamaClient if available, falls back to raw requests
     # ------------------------------------------------------------------ #
+
+    def _call_llm(self, system_prompt: str, user_prompt: str) -> Optional[str]:
+        """
+        Single LLM call entry point.
+        Routes through Abraham's OllamaClient if available.
+        Falls back to direct requests call otherwise.
+        Returns the raw text response from the LLM, or None on failure.
+        """
+        # --- Abraham's client path ---
+        if self.llm_client is not None:
+            try:
+                data = self.llm_client.prompt(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt
+                )
+                # Abraham's client returns {"message": {"content": "..."}, ...}
+                return data["message"]["content"]
+            except Exception as e:
+                console.print(
+                    f"[yellow]  Abraham OllamaClient error: {e} -- trying fallback[/yellow]"
+                )
+
+        # --- Fallback: raw requests to Ollama chat endpoint ---
+        try:
+            resp = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model":  OLLAMA_MODEL,
+                    "messages": [
+                        {"role": "system",  "content": system_prompt},
+                        {"role": "user",    "content": user_prompt},
+                    ],
+                    "format": "json",
+                    "stream": False,
+                },
+                timeout=60
+            )
+            if resp.status_code == 200:
+                return resp.json()["message"]["content"]
+        except Exception as e:
+            console.print(f"[yellow]  Fallback LLM error: {e}[/yellow]")
+
+        return None
 
     def _pass2_reason(
         self,
@@ -610,26 +608,24 @@ class Verifier:
         """
         Chain of Thought LLM reasoning for sub-0.80 findings.
 
-        DESIGN PRINCIPLE:
-            The LLM is not asked yes/no questions.
-            It must reason through 4 specific questions before concluding.
-            This forces it to consider evidence rather than pattern-match.
-            CoT prompting significantly reduces hallucination in LLM judgments.
+        DESIGN:
+            LLM is not asked yes/no. It must reason through 4 questions
+            before concluding. Forces consideration of evidence rather
+            than pattern-matching. CoT significantly reduces hallucination
+            in LLM judgments.
 
-        AGENT CONTEXT:
-            The LLM receives a summary of what happened earlier this engagement.
-            This is what makes this agentic -- the LLM has memory.
+        LLM CALL:
+            Routes through Abraham's OllamaClient (abraham_llm_client.py).
+            Falls back to raw requests if client unavailable.
 
         Returns (disposition, final_confidence, reasoning_text).
-        Fails gracefully: if LLM unavailable, falls back to severity threshold.
+        Fails gracefully to severity-based fallback if LLM unavailable.
         """
         if not self.ollama_available:
-            # Graceful fallback: use severity as tiebreaker
             if finding.severity_score < SEVERITY_REMOVE_THRESHOLD:
                 return "remove", pass1_confidence, "LLM unavailable -- severity below threshold"
             return "flag", pass1_confidence, "LLM unavailable -- flagged for manual review"
 
-        # Build the CoT prompt with full context
         context_summary = (
             self.context.context_summary() if self.context
             else "No session context available."
@@ -639,7 +635,12 @@ class Verifier:
             else "none -- borderline confidence score"
         )
 
-        prompt = f"""You are a senior security analyst reviewing a flagged finding.
+        system_prompt = (
+            "You are a precise security analyst. "
+            "Think step by step. Respond only in valid JSON."
+        )
+
+        user_prompt = f"""You are a senior security analyst reviewing a flagged finding.
 
 The automated Pass 1 checks scored this finding {pass1_confidence:.2f} confidence.
 The threshold to skip LLM review is {CONFIDENCE_GATE}. This finding did not clear it.
@@ -673,52 +674,46 @@ Respond ONLY in valid JSON, no other text before or after:
 }}"""
 
         try:
-            result: LLMResponse = query_llm(
-                prompt=prompt,
-                system_prompt=(
-                    "You are a precise security analyst. "
-                    "Think step by step. Respond only in valid JSON."
-                ),
-                expect_json=True
-            )
+            text = self._call_llm(system_prompt, user_prompt)
 
-            if result and result.content:
-                content = result.content
-                if isinstance(content, str):
-                    try:
-                        content = json.loads(content)
-                    except (json.JSONDecodeError, ValueError):
-                        return "flag", pass1_confidence, "LLM JSON parse failed -- flagged"
+            if text is None:
+                self.ollama_available = False
+                return "flag", pass1_confidence, "LLM returned no response -- flagged"
 
-                if isinstance(content, dict):
-                    disposition      = content.get("disposition", "flag")
-                    final_confidence = float(content.get("final_confidence", pass1_confidence))
-                    reasoning        = content.get("reasoning", "")
-                    analyst_note     = content.get("analyst_note", "")
+            # Parse JSON response
+            if isinstance(text, str):
+                try:
+                    content = json.loads(text)
+                except json.JSONDecodeError:
+                    return "flag", pass1_confidence, "LLM JSON parse failed -- flagged"
+            else:
+                content = text
 
-                    # Validate disposition
-                    if disposition not in ("pass", "flag", "remove"):
-                        disposition = "flag"
+            if isinstance(content, dict):
+                disposition      = content.get("disposition", "flag")
+                final_confidence = float(content.get("final_confidence", pass1_confidence))
+                reasoning        = content.get("reasoning", "")
+                analyst_note     = content.get("analyst_note", "")
 
-                    console.print(
-                        f"[dim]    Pass 2 ({disposition}): {reasoning[:60]}...[/dim]"
-                    )
-                    return disposition, final_confidence, f"{reasoning} | {analyst_note}"
+                if disposition not in ("pass", "flag", "remove"):
+                    disposition = "flag"
+
+                console.print(
+                    f"[dim]    Pass 2 ({disposition}): {reasoning[:60]}...[/dim]"
+                )
+                return disposition, final_confidence, f"{reasoning} | {analyst_note}"
 
         except Exception as e:
             self.ollama_available = False
-            console.print(f"[yellow]  Pass 2 LLM error: {e} -- falling back[/yellow]")
+            console.print(f"[yellow]  Pass 2 error: {e} -- falling back[/yellow]")
 
         return "flag", pass1_confidence, "LLM call failed -- flagged for manual review"
 
     # ------------------------------------------------------------------ #
     # DEDUP -- difflib only, no LLM
-    # LLM budget is reserved for Pass 2 reasoning.
-    # Findings that cleared 0.80 in Pass 1 don't need LLM dedup.
     # ------------------------------------------------------------------ #
 
     def _is_duplicate(self, finding: Finding, verified: list) -> bool:
-        """difflib duplicate check only. No LLM."""
         if not verified:
             return False
         same_type = [f for f in verified if f.finding_type == finding.finding_type]
@@ -750,24 +745,24 @@ Respond ONLY in valid JSON, no other text before or after:
         ground_truth_map: {"Finding title": True/False}
             True  = real, accurate finding
             False = hallucinated or inaccurate
-            Same format as baseline -- pass same dict to both for fair comparison.
         """
-        # Initialize session memory for this engagement
         self.context = AgentContext(target=aggregated.target)
 
         console.print(
             f"\n[cyan]  Verifier (TWO-PASS AGENTIC): reviewing "
             f"{aggregated.total_findings} findings...[/cyan]"
         )
-        console.print(f"[dim]  Confidence gate: {CONFIDENCE_GATE} "
-                      f"(findings above this skip LLM entirely)[/dim]")
+        console.print(
+            f"[dim]  Confidence gate: {CONFIDENCE_GATE} "
+            f"(findings above this skip LLM entirely)[/dim]"
+        )
 
-        verified_findings:   list[Finding] = []
-        deterministic_count: int           = 0
+        verified_findings:   list = []
+        deterministic_count: int  = 0
 
         for finding in aggregated.findings:
 
-            # OSINT and traditional recon pass through unchanged
+            # Non-LLM findings pass through unchanged
             if finding.source_module != "llm_attack":
                 verified_findings.append(finding)
                 deterministic_count += 1
@@ -775,7 +770,7 @@ Respond ONLY in valid JSON, no other text before or after:
 
             self.stats["total_reviewed"] += 1
 
-            # ── PASS 1: CONFIDENCE SCORING ──────────────────────────
+            # ── PASS 1 ──────────────────────────────────────────────
             p1_start = time.time()
             current, confidence, checks_failed = self._pass1_confidence(finding)
             p1_time  = time.time() - p1_start
@@ -788,7 +783,7 @@ Respond ONLY in valid JSON, no other text before or after:
                 f"{'-> EXIT' if confidence >= CONFIDENCE_GATE else '-> PASS2'}[/dim]"
             )
 
-            # Hard remove: severity below minimum regardless of confidence
+            # Hard remove: severity below minimum
             if current.severity_score < SEVERITY_REMOVE_THRESHOLD:
                 self.stats["removed"] += 1
                 decision = VerifierDecision(
@@ -809,20 +804,19 @@ Respond ONLY in valid JSON, no other text before or after:
                 )
                 self.metrics.record(decision, False, p1_time, 0.0)
                 self.unverified_findings.append({
-                    "reason": "low_severity", "finding": _finding_to_dict(finding),
+                    "reason":    "low_severity",
+                    "finding":   _finding_to_dict(finding),
                     "timestamp": datetime.now().isoformat()
                 })
-                console.print(f"[dim]    Hard removed (sev < {SEVERITY_REMOVE_THRESHOLD}): {finding.title[:50]}[/dim]")
                 continue
 
-            # CONFIDENCE GATE: high confidence findings exit here, LLM never called
+            # CONFIDENCE GATE: high confidence exits here, no LLM
             if confidence >= CONFIDENCE_GATE:
                 self.stats["pass1_exits"] += 1
 
                 if self._is_duplicate(current, verified_findings):
                     self.stats["duplicates_removed"] += 1
                     final_disp = "duplicate"
-                    console.print(f"[dim]    Duplicate (P1 exit): {current.title[:50]}[/dim]")
                 else:
                     final_disp = "pass" if confidence >= 0.90 else "flag"
                     self.stats["passed"] += 1
@@ -852,9 +846,9 @@ Respond ONLY in valid JSON, no other text before or after:
                 self.metrics.record(decision, False, p1_time, 0.0)
                 continue
 
-            # ── PASS 2: CoT LLM REASONING ───────────────────────────
+            # ── PASS 2: CoT REASONING ───────────────────────────────
             self.stats["pass2_invocations"] += 1
-            self.context.pass2_invocations += 1
+            self.context.pass2_invocations  += 1
             p2_start = time.time()
 
             console.print(
@@ -866,24 +860,23 @@ Respond ONLY in valid JSON, no other text before or after:
             )
             p2_time = time.time() - p2_start
 
-            # Track agreement: LLM agreed with Pass 1 suggestion (flag)
             if p2_disp == "flag":
                 self.context.pass2_agreements += 1
-                self.metrics.pass2_agreements += 1
+                self.metrics.pass2_agreements  += 1
 
             if p2_disp == "remove":
                 self.stats["removed"] += 1
                 self.unverified_findings.append({
-                    "reason": "pass2_removed", "finding": _finding_to_dict(finding),
-                    "reasoning": p2_reasoning, "timestamp": datetime.now().isoformat()
+                    "reason":    "pass2_removed",
+                    "finding":   _finding_to_dict(finding),
+                    "reasoning": p2_reasoning,
+                    "timestamp": datetime.now().isoformat()
                 })
-                console.print(f"[dim]    P2 removed: {current.title[:50]}[/dim]")
                 final_disp = "remove"
 
             elif self._is_duplicate(current, verified_findings):
                 self.stats["duplicates_removed"] += 1
                 final_disp = "duplicate"
-                console.print(f"[dim]    Duplicate (P2): {current.title[:50]}[/dim]")
 
             else:
                 if p2_disp == "pass":
@@ -954,10 +947,10 @@ Respond ONLY in valid JSON, no other text before or after:
                     "unverified_findings": self.unverified_findings,
                     "agent_context": {
                         "confirmed_finding_types": self.context.confirmed_finding_types if self.context else {},
-                        "stripped_cve_count":      self.context.stripped_cve_count if self.context else 0,
-                        "session_confidence_avg":  self.context.session_confidence_avg if self.context else 0,
-                        "pass2_invocations":       self.context.pass2_invocations if self.context else 0,
-                        "pass2_agreements":        self.context.pass2_agreements if self.context else 0,
+                        "stripped_cve_count":      self.context.stripped_cve_count      if self.context else 0,
+                        "session_confidence_avg":  self.context.session_confidence_avg  if self.context else 0,
+                        "pass2_invocations":       self.context.pass2_invocations       if self.context else 0,
+                        "pass2_agreements":        self.context.pass2_agreements        if self.context else 0,
                     }
                 }, f, indent=2)
             console.print(f"[dim]  Verification report: {path}[/dim]")
@@ -966,6 +959,8 @@ Respond ONLY in valid JSON, no other text before or after:
 
     def _print_summary(self, total_before: int, total_after: int, deterministic_count: int = 0):
         console.print("\n[bold green]  Verifier (TWO-PASS AGENTIC) complete[/bold green]")
+        llm_src = "Abraham OllamaClient" if ABRAHAM_CLIENT_AVAILABLE else "fallback requests"
+        console.print(f"[dim]    LLM source: {llm_src}[/dim]")
         if deterministic_count > 0:
             console.print(f"[dim]    Deterministic findings: {deterministic_count} -- passed through[/dim]")
         if self.stats["total_reviewed"] == 0:
@@ -987,58 +982,3 @@ Respond ONLY in valid JSON, no other text before or after:
                     f"{100*self.context.pass2_agreements//max(self.context.pass2_invocations,1)}%[/dim]"
                 )
         console.print(f"[dim]    Total: {total_before} -> {total_after} findings[/dim]")
-
-
-# ================================================================== #
-# TERMINAL COMMANDS -- EXACT STEPS
-# ================================================================== #
-"""
-ONE TIME SETUP:
-    cd r3d-agent
-    source venv/bin/activate
-
---- BASELINE RUNS FIRST ---
-
-STEP 1: Install baseline as verifier
-    cp verifier_baseline.py core/verifier.py
-
-STEP 2: Connect TryHackMe VPN (new terminal, leave it open)
-    sudo openvpn ~/Downloads/your-tryhackme-config.ovpn
-
-STEP 3: Run engagement -- Target 1 (get IP from TryHackMe machine page)
-    python main.py --target 10.10.X.X --mode semi-auto
-
-STEP 4: Run engagement -- Target 2 (different TryHackMe machine)
-    python main.py --target 10.10.X.X --mode semi-auto
-
-STEP 5: Run engagement -- Target 3 (different TryHackMe machine)
-    python main.py --target 10.10.X.X --mode semi-auto
-
-    After each: open output/TIMESTAMP_findings.json
-    Label each llm_attack finding True/False in your ground_truth.json
-
---- AGENTIC RUNS SECOND (same targets) ---
-
-STEP 6: Swap in agentic verifier
-    cp verifier_agentic.py core/verifier.py
-
-STEP 7: Repeat same 3 targets
-    python main.py --target 10.10.X.X --mode semi-auto   (target 1 again)
-    python main.py --target 10.10.X.X --mode semi-auto   (target 2 again)
-    python main.py --target 10.10.X.X --mode semi-auto   (target 3 again)
-
---- COMPARE ---
-
-STEP 8: Run compare_metrics.py (reads all JSONs from output/reports/)
-    python compare_metrics.py
-
-OUTPUT FILES PER ENGAGEMENT:
-    Baseline:  TIMESTAMP_TARGET_BASELINE_metrics.json
-    Agentic:   TIMESTAMP_TARGET_AGENTIC_metrics.json
-               TIMESTAMP_TARGET_decisions.jsonl  (Alec's audit trail)
-
-TryHackMe rooms with AI surfaces (search these in room finder):
-    "AI"  "LLM"  "machine learning"  "chatbot"
-    Any room with /api/chat, /api/ai, or a chatbot interface will
-    trigger R3D's LLM attack module and produce LLM findings to verify.
-"""
